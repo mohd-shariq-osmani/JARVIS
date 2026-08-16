@@ -9,6 +9,7 @@ from app.ai.router import AIRouter
 from app.tools.registry import ToolRegistry
 from app.tools.system_tools import register_system_tools
 from app.tools.files import register_file_tools
+from app.tools.web_tools import register_web_tools
 from app.platform.windows.computer import WindowsComputerProvider, register_windows_tools
 from app.memory.vector_memory import MemoryManager, register_memory_tools
 from app.tasks.manager import TaskManager
@@ -43,6 +44,7 @@ computer_provider = WindowsComputerProvider()
 # Register Tools
 register_system_tools(tool_registry)
 register_windows_tools(tool_registry, computer_provider)
+register_web_tools(tool_registry)
 register_memory_tools(tool_registry, memory_manager)
 register_task_tools(tool_registry, task_manager)
 register_file_tools(tool_registry)
