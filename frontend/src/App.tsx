@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import Settings from './pages/Settings';
 import Diagnostics from './pages/Diagnostics';
 import Memory from './pages/Memory';
+import Tasks from './pages/Tasks';
 
 function App() {
   const [status, setStatus] = useState<string>("CONNECTING");
@@ -28,6 +29,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
+          <Route path="tasks" element={<Tasks />} />
           <Route path="settings" element={<Settings />} />
           <Route path="diagnostics" element={<Diagnostics />} />
           <Route path="memory" element={<Memory />} />

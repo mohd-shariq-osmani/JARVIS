@@ -2,6 +2,7 @@
     "provider": "lmstudio",
     "lmstudio_url": "http://127.0.0.1:1234/v1",
     "lmstudio_model": "local-model",
-    "openrouter_key": "",
-    "openrouter_model": "google/gemma-4-26b-a4b-it:free"
+    "openrouter_key": "test-key",
+    "openrouter_model": "google/gemini-2.0-flash",
+    "routing_mode": "manual"
 }

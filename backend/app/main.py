@@ -3,18 +3,20 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
+import asyncio
 
-from app.ai.lmstudio import LMStudioProvider
+from app.ai.router import AIRouter
 from app.tools.registry import ToolRegistry
 from app.tools.system_tools import register_system_tools
 from app.tools.files import register_file_tools
 from app.platform.windows.computer import WindowsComputerProvider, register_windows_tools
 from app.memory.vector_memory import MemoryManager, register_memory_tools
+from app.tasks.manager import TaskManager
+from app.tools.task_tools import register_task_tools
 from app.tools.vision import register_vision_tools
 from app.agent.orchestrator import AgentOrchestrator
 from app.voice.manager import VoiceManager
-from app.api import endpoints, diagnostics, telemetry, settings, memory
-import asyncio
+from app.api import endpoints, diagnostics, telemetry, settings, memory, tasks
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -32,15 +34,17 @@ app.add_middleware(
 )
 
 # Initialize Core Services
-ai_provider = LMStudioProvider()
+ai_provider = AIRouter()
 tool_registry = ToolRegistry()
 memory_manager = MemoryManager()
+task_manager = TaskManager()
 computer_provider = WindowsComputerProvider()
 
 # Register Tools
 register_system_tools(tool_registry)
 register_windows_tools(tool_registry, computer_provider)
 register_memory_tools(tool_registry, memory_manager)
+register_task_tools(tool_registry, task_manager)
 register_file_tools(tool_registry)
 register_vision_tools(tool_registry, computer_provider, ai_provider)
 
@@ -59,11 +63,14 @@ async def voice_callback(text: str):
 # Inject Agent and Services into endpoints
 endpoints.agent = agent
 memory.memory_manager = memory_manager
+tasks.task_manager = task_manager
+
 app.include_router(endpoints.router)
 app.include_router(diagnostics.router)
 app.include_router(telemetry.router)
 app.include_router(settings.router)
 app.include_router(memory.router)
+app.include_router(tasks.router)
 
 class VoiceConnectionManager:
     def __init__(self):
@@ -109,10 +116,13 @@ async def startup_event():
     await ai_provider.initialize()
     asyncio.create_task(telemetry.telemetry_loop())
     
+    # Start Background Task Scheduler Loop
+    asyncio.create_task(task_manager.run_scheduler(agent=agent, voice_manager=voice_manager))
+    
     # Start Voice Listening Loop
     voice_manager.start_listening(voice_callback, voice_state_callback)
     
-    logger.info("JARVIS Backend Started with Voice Recognition Active")
+    logger.info("JARVIS Backend Started with Voice Recognition & Task Scheduler Active")
 
 @app.get("/health")
 async def health_check():
@@ -123,9 +133,11 @@ async def get_status():
     return {
         "status": "online",
         "providers": {
-            "ai": "connected" if ai_provider.active else "disconnected"
+            "ai": ai_provider.active_provider_name,
+            "ai_active": await ai_provider.health_check()
         },
-        "memory": "initialized"
+        "memory": "initialized",
+        "tasks_count": len(task_manager.get_tasks())
     }
 
 if __name__ == "__main__":

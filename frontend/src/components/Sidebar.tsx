@@ -1,5 +1,5 @@
 import React from 'react';
-import { Terminal, Database, Activity, Settings } from 'lucide-react';
+import { Terminal, Database, Clock, Activity, Settings } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 export const Sidebar: React.FC = () => {
@@ -8,6 +8,7 @@ export const Sidebar: React.FC = () => {
 
   const navItems = [
     { id: '/', icon: Terminal, label: 'Terminal' },
+    { id: '/tasks', icon: Clock, label: 'Tasks' },
     { id: '/memory', icon: Database, label: 'Memory' },
     { id: '/diagnostics', icon: Activity, label: 'Diagnostics' },
     { id: '/settings', icon: Settings, label: 'Settings' },
