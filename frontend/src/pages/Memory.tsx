@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Search, Plus, Trash2, Tag, Calendar, AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Database, Search, Plus, Trash2, Calendar, AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 interface MemoryItem {
   id: string;

@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARIA — Voice Interface</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #08090a;
+    --bg-elev: #0e0f11;
+    --white: #f2f2ef;
+    --white-dim: #c9c9c4;
+    --grey-mid: #74777d;
+    --grey-dim: #3a3c40;
+    --hairline: rgba(242,242,239,0.08);
+    --hairline-strong: rgba(242,242,239,0.16);
+    --ice: #b9e4ff;
+    --ice-dim: rgba(185,228,255,0.35);
+    --glow-idle: rgba(242,242,239,0.10);
+    --glow-listen: rgba(185,228,255,0.45);
+    --glow-think: rgba(242,242,239,0.30);
+    --glow-speak: rgba(242,242,239,0.55);
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  html, body {
+    height:100%;
+    background:
+      radial-gradient(ellipse 120% 80% at 50% 20%, rgba(255,255,255,0.03), transparent 60%),
+      var(--bg);
+    color: var(--white);
+    font-family: var(--font-body);
+    overflow:hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .stage {
+    position:relative;
+    width:100vw;
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+  }
+
+  /* faint scanline texture */
+  .stage::before{
+    content:'';
+    position:absolute; inset:0;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.012) 0px,
+      rgba(255,255,255,0.012) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    pointer-events:none;
+    opacity:0.5;
+  }
+
+  /* corner brackets */
+  .bracket{
+    position:absolute;
+    width:28px; height:28px;
+    border-color: var(--hairline-strong);
+    border-style:solid;
+    border-width:0;
+    opacity:0.7;
+    transition: border-color 0.6s ease, opacity 0.6s ease;
+  }
+  .bracket.tl{ top:28px; left:28px; border-top-width:1px; border-left-width:1px; }
+  .bracket.tr{ top:28px; right:28px; border-top-width:1px; border-right-width:1px; }
+  .bracket.bl{ bottom:28px; left:28px; border-bottom-width:1px; border-left-width:1px; }
+  .bracket.br{ bottom:28px; right:28px; border-bottom-width:1px; border-right-width:1px; }
+  body.listening .bracket{ border-color: var(--ice-dim); opacity:1; }
+
+  /* header */
+  header{
+    position:relative;
+    z-index:2;
+    padding: 34px 44px 0 44px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+  .brand{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .brand .mark{
+    font-family: var(--font-display);
+    font-weight:600;
+    font-size:15px;
+    letter-spacing:0.24em;
+    color: var(--white);
+  }
+  .brand .sub{
+    font-family: var(--font-mono);
+    font-size:10px;
+    letter-spacing:0.12em;
+    color: var(--grey-mid);
+    text-transform:uppercase;
+  }
+
+  .telemetry{
+    text-align:right;
+    font-family: var(--font-mono);
+    font-size:10.5px;
+    color: var(--grey-mid);
+    letter-spacing:0.06em;
+    line-height:1.9;
+  }
+  .telemetry .row{ display:flex; gap:10px; justify-content:flex-end; align-items:center; }
+  .telemetry .dot{
+    width:5px; height:5px; border-radius:50%;
+    background: var(--grey-dim);
+    display:inline-block;
+  }
+  .telemetry .dot.on{ background: var(--ice); box-shadow:0 0 6px var(--ice); }
+  .telemetry .val{ color: var(--white-dim); }
+
+  /* CORE */
+  .core-wrap{
+    position:relative;
+    z-index:2;
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  .status-label{
+    position:absolute;
+    top:-64px;
+    left:50%;
+    transform:translateX(-50%);
+    font-family: var(--font-display);
+    font-weight:400;
+    font-size:13px;
+    letter-spacing:0.32em;
+    text-transform:uppercase;
+    color: var(--grey-mid);
+    transition: color 0.5s ease, letter-spacing 0.5s ease;
+  }
+  body.listening .status-label{ color: var(--ice); }
+  body.thinking .status-label{ color: var(--white-dim); }
+  body.speaking .status-label{ color: var(--white); }
+
+  .core-btn{
+    position:relative;
+    width:280px; height:280px;
+    background:none;
+    border:none;
+    cursor:pointer;
+    outline-offset:8px;
+  }
+  .core-btn:focus-visible{ outline: 1px solid var(--ice); border-radius:50%; }
+
+  .ring{
+    position:absolute;
+    top:50%; left:50%;
+    border-radius:50%;
+    border:1px solid var(--hairline);
+    transform:translate(-50%,-50%);
+    transition: border-color 0.7s ease, box-shadow 0.7s ease;
+  }
+  .ring.r1{ width:280px; height:280px; }
+  .ring.r2{ width:216px; height:216px; border-style:dashed; opacity:0.5; }
+  .ring.r3{ width:158px; height:158px; }
+
+  .ticks{
+    position:absolute; top:50%; left:50%;
+    width:280px; height:280px;
+    transform:translate(-50%,-50%);
+    animation: spin 60s linear infinite;
+  }
+  .ticks div{
+    position:absolute;
+    top:0; left:50%;
+    width:1px; height:6px;
+    background: var(--grey-dim);
+    transform-origin: 50% 140px;
+  }
+
+  .core-center{
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    width:120px; height:120px;
+    border-radius:50%;
+    background: radial-gradient(circle at 50% 42%, rgba(242,242,239,0.10), rgba(242,242,239,0.01) 70%);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow: 0 0 40px 6px var(--glow-idle);
+    transition: box-shadow 0.8s ease;
+  }
+  body.listening .core-center{ box-shadow: 0 0 60px 10px var(--glow-listen); }
+  body.thinking .core-center{ box-shadow: 0 0 50px 8px var(--glow-think); }
+  body.speaking .core-center{ box-shadow: 0 0 70px 12px var(--glow-speak); }
+
+  .wave{
+    display:flex;
+    align-items:center;
+    gap:4px;
+    height:44px;
+  }
+  .wave span{
+    display:block;
+    width:2.5px;
+    border-radius:2px;
+    background: var(--white);
+    height:6px;
+    opacity:0.55;
+    transition: background 0.5s ease;
+  }
+  body.listening .wave span{ background: var(--ice); }
+
+  /* idle breathing */
+  body.idle .wave span{ animation: breathe 3.4s ease-in-out infinite; }
+  body.idle .wave span:nth-child(1){ animation-delay: 0s; }
+  body.idle .wave span:nth-child(2){ animation-delay: 0.15s; }
+  body.idle .wave span:nth-child(3){ animation-delay: 0.3s; }
+  body.idle .wave span:nth-child(4){ animation-delay: 0.45s; }
+  body.idle .wave span:nth-child(5){ animation-delay: 0.6s; }
+  body.idle .wave span:nth-child(6){ animation-delay: 0.45s; }
+  body.idle .wave span:nth-child(7){ animation-delay: 0.3s; }
+  body.idle .wave span:nth-child(8){ animation-delay: 0.15s; }
+  body.idle .wave span:nth-child(9){ animation-delay: 0s; }
+
+  @keyframes breathe{
+    0%, 100% { height:6px; opacity:0.35; }
+    50% { height:16px; opacity:0.65; }
+  }
+
+  /* listening: sharp reactive bars */
+  body.listening .wave span{ animation: listen 0.9s ease-in-out infinite; }
+  body.listening .wave span:nth-child(1){ animation-delay: 0.0s; }
+  body.listening .wave span:nth-child(2){ animation-delay: 0.08s; }
+  body.listening .wave span:nth-child(3){ animation-delay: 0.16s; }
+  body.listening .wave span:nth-child(4){ animation-delay: 0.24s; }
+  body.listening .wave span:nth-child(5){ animation-delay: 0.32s; }
+  body.listening .wave span:nth-child(6){ animation-delay: 0.24s; }
+  body.listening .wave span:nth-child(7){ animation-delay: 0.16s; }
+  body.listening .wave span:nth-child(8){ animation-delay: 0.08s; }
+  body.listening .wave span:nth-child(9){ animation-delay: 0.0s; }
+  @keyframes listen{
+    0%, 100% { height:8px; opacity:0.5; }
+    50% { height:40px; opacity:1; }
+  }
+
+  /* thinking: slow uniform pulse */
+  body.thinking .wave span{ animation: think 1.2s ease-in-out infinite; height:10px; opacity:0.6; }
+  body.thinking .wave span:nth-child(odd){ animation-delay: 0.3s; }
+  @keyframes think{
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(1.8); }
+  }
+
+  /* speaking: full amplitude natural speech-like */
+  body.speaking .wave span{ animation: speak 0.6s ease-in-out infinite; opacity:0.9; }
+  body.speaking .wave span:nth-child(1){ animation-delay: 0.05s; height:14px; }
+  body.speaking .wave span:nth-child(2){ animation-delay: 0.32s; height:28px; }
+  body.speaking .wave span:nth-child(3){ animation-delay: 0.11s; height:38px; }
+  body.speaking .wave span:nth-child(4){ animation-delay: 0.44s; height:20px; }
+  body.speaking .wave span:nth-child(5){ animation-delay: 0.0s; height:42px; }
+  body.speaking .wave span:nth-child(6){ animation-delay: 0.27s; height:22px; }
+  body.speaking .wave span:nth-child(7){ animation-delay: 0.18s; height:36px; }
+  body.speaking .wave span:nth-child(8){ animation-delay: 0.38s; height:26px; }
+  body.speaking .wave span:nth-child(9){ animation-delay: 0.09s; height:16px; }
+  @keyframes speak{
+    0%, 100% { transform: scaleY(0.7); }
+    50% { transform: scaleY(1.25); }
+  }
+
+  body.listening .ring.r1{ border-color: var(--ice-dim); }
+  body.listening .ticks div{ background: var(--ice-dim); }
+  body.thinking .ring.r2{ animation: spin 3s linear infinite; }
+  body.speaking .ring.r3{ border-color: var(--hairline-strong); }
+
+  @keyframes spin{ from{ transform: translate(-50%,-50%) rotate(0deg); } to{ transform: translate(-50%,-50%) rotate(360deg); } }
+
+  /* hint text */
+  .hint{
+    position:absolute;
+    bottom:-56px;
+    left:50%;
+    transform:translateX(-50%);
+    font-family: var(--font-mono);
+    font-size:10px;
+    letter-spacing:0.1em;
+    color: var(--grey-dim);
+    white-space:nowrap;
+    transition: opacity 0.4s ease;
+  }
+  body:not(.idle) .hint{ opacity:0; }
+
+  /* transcript / footer */
+  footer{
+    position:relative;
+    z-index:2;
+    padding: 0 44px 30px 44px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .log{
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    max-height:120px;
+    overflow:hidden;
+    justify-content:flex-end;
+  }
+  .log-line{
+    font-family: var(--font-mono);
+    font-size:12px;
+    letter-spacing:0.01em;
+    color: var(--grey-mid);
+    display:flex;
+    gap:12px;
+    opacity:0;
+    animation: rise 0.5s ease forwards;
+  }
+  .log-line .tag{
+    color: var(--grey-dim);
+    min-width:64px;
+  }
+  .log-line.user .tag{ color: var(--ice-dim); }
+  .log-line.user .txt{ color: var(--white-dim); }
+  .log-line.aria .txt{ color: var(--white); }
+  @keyframes rise{
+    from{ opacity:0; transform:translateY(6px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+
+  .footer-rule{
+    height:1px;
+    background: var(--hairline);
+    width:100%;
+  }
+  .footer-meta{
+    display:flex;
+    justify-content:space-between;
+    font-family: var(--font-mono);
+    font-size:9.5px;
+    letter-spacing:0.1em;
+    color: var(--grey-dim);
+    text-transform:uppercase;
+  }
+
+  @media (max-width: 640px){
+    header{ padding:24px 20px 0 20px; }
+    .telemetry{ display:none; }
+    .core-btn{ width:220px; height:220px; }
+    .ring.r1{ width:220px; height:220px; }
+    .ring.r2{ width:170px; height:170px; }
+    .ring.r3{ width:124px; height:124px; }
+    .ticks{ width:220px; height:220px; }
+    footer{ padding:0 20px 22px 20px; }
+    .bracket{ width:18px; height:18px; }
+    .bracket.tl,.bracket.tr{ top:18px; }
+    .bracket.bl,.bracket.br{ bottom:18px; }
+    .bracket.tl,.bracket.bl{ left:18px; }
+    .bracket.tr,.bracket.br{ right:18px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001s !important; animation-iteration-count:1 !important; }
+  }
+</style>
+</head>
+<body class="idle">
+
+<div class="stage">
+  <div class="bracket tl"></div>
+  <div class="bracket tr"></div>
+  <div class="bracket bl"></div>
+  <div class="bracket br"></div>
+
+  <header>
+    <div class="brand">
+      <div class="mark">A · R · I · A</div>
+      <div class="sub">Adaptive Response Interface</div>
+    </div>
+    <div class="telemetry">
+      <div class="row"><span>SYS</span><span class="val" id="sysStatus">NOMINAL</span><span class="dot on"></span></div>
+      <div class="row"><span>MIC</span><span class="val" id="micStatus">STANDBY</span><span class="dot" id="micDot"></span></div>
+      <div class="row"><span>TIME</span><span class="val" id="clock">00:00:00</span></div>
+    </div>
+  </header>
+
+  <div class="core-wrap">
+    <div style="position:relative;">
+      <div class="status-label" id="statusLabel">Standing By</div>
+      <button class="core-btn" id="coreBtn" aria-label="Activate voice input">
+        <div class="ticks" id="ticks"></div>
+        <div class="ring r1"></div>
+        <div class="ring r2"></div>
+        <div class="ring r3"></div>
+        <div class="core-center">
+          <div class="wave">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </button>
+      <div class="hint">CLICK TO SPEAK — OR PRESS SPACE</div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="log" id="log"></div>
+    <div class="footer-rule"></div>
+    <div class="footer-meta">
+      <span>ARIA v2.4 — LOCAL SESSION</span>
+      <span id="stateFooter">STATE: IDLE</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+  // build radial ticks
+  const ticks = document.getElementById('ticks');
+  for(let i=0;i<48;i++){
+    const t = document.createElement('div');
+    t.style.transform = `rotate(${i*(360/48)}deg)`;
+    if(i % 6 === 0){ t.style.height = '10px'; t.style.opacity = '0.9'; }
+    ticks.appendChild(t);
+  }
+
+  // clock
+  function tick(){
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toLocaleTimeString('en-GB', {hour12:false});
+  }
+  tick(); setInterval(tick, 1000);
+
+  const body = document.body;
+  const coreBtn = document.getElementById('coreBtn');
+  const statusLabel = document.getElementById('statusLabel');
+  const micStatus = document.getElementById('micStatus');
+  const micDot = document.getElementById('micDot');
+  const stateFooter = document.getElementById('stateFooter');
+  const log = document.getElementById('log');
+
+  const states = ['idle','listening','thinking','speaking'];
+  const labels = { idle:'Standing By', listening:'Listening', thinking:'Processing', speaking:'Responding' };
+
+  const sampleExchanges = [
+    ["What's the status of the northeast deployment?", "Deployment is stable. Three services restarted in the last hour, all healthy now."],
+    ["Summarize the overnight alerts.", "Two minor latency spikes, both resolved automatically. Nothing needs your attention."],
+    ["Set a reminder for the 4pm review.", "Done. I'll notify you ten minutes before."],
+  ];
+
+  function setState(s){
+    states.forEach(st => body.classList.remove(st));
+    body.classList.add(s);
+    statusLabel.textContent = labels[s];
+    stateFooter.textContent = 'STATE: ' + s.toUpperCase();
+    if(s === 'listening'){ micStatus.textContent = 'ACTIVE'; micDot.classList.add('on'); }
+    else if(s === 'idle'){ micStatus.textContent = 'STANDBY'; micDot.classList.remove('on'); }
+    else { micDot.classList.remove('on'); }
+  }
+
+  function addLog(role, text){
+    const line = document.createElement('div');
+    line.className = 'log-line ' + role;
+    line.innerHTML = `<span class="tag">${role === 'user' ? 'YOU' : 'ARIA'}</span><span class="txt">${text}</span>`;
+    log.appendChild(line);
+    while(log.children.length > 4){ log.removeChild(log.firstChild); }
+  }
+
+  let busy = false;
+  function runCycle(){
+    if(busy) return;
+    busy = true;
+    const [q, a] = sampleExchanges[Math.floor(Math.random()*sampleExchanges.length)];
+
+    setState('listening');
+    setTimeout(() => {
+      addLog('user', q);
+      setState('thinking');
+      setTimeout(() => {
+        setState('speaking');
+        addLog('aria', a);
+        setTimeout(() => {
+          setState('idle');
+          busy = false;
+        }, 2600);
+      }, 1400);
+    }, 1800);
+  }
+
+  coreBtn.addEventListener('click', runCycle);
+  window.addEventListener('keydown', (e) => {
+    if(e.code === 'Space'){ e.preventDefault(); runCycle(); }
+  });
+
+  setState('idle');
+</script>
+
+</body>
+</html>

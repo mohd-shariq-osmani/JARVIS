@@ -16,6 +16,7 @@ from app.tasks.manager import TaskManager
 from app.tools.task_tools import register_task_tools
 from app.tools.vision import register_vision_tools
 from app.agent.orchestrator import AgentOrchestrator
+from app.agent.queue_manager import MessageQueueManager
 from app.voice.manager import VoiceManager
 from app.api import endpoints, diagnostics, telemetry, settings, memory, tasks
 
@@ -33,46 +34,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize Core Services
-ai_provider = AIRouter()
-tool_registry = ToolRegistry()
-memory_manager = MemoryManager()
-task_manager = TaskManager()
-computer_provider = WindowsComputerProvider()
-
-# Register Tools
-register_system_tools(tool_registry)
-register_windows_tools(tool_registry, computer_provider)
-register_web_tools(tool_registry)
-register_memory_tools(tool_registry, memory_manager)
-register_task_tools(tool_registry, task_manager)
-register_file_tools(tool_registry)
-register_vision_tools(tool_registry, computer_provider, ai_provider)
-
-# Initialize Agent and Voice
-agent = AgentOrchestrator(ai_provider, tool_registry, memory_manager)
-voice_manager = VoiceManager()
-
-async def voice_callback(text: str):
-    logger.info(f"Voice Callback received: {text}")
-    # Process through agent
-    response = await agent.handle_request(text)
-    if response:
-        # Speak the response
-        await voice_manager.speak(response)
-
-# Inject Agent and Services into endpoints
-endpoints.agent = agent
-memory.memory_manager = memory_manager
-tasks.task_manager = task_manager
-
-app.include_router(endpoints.router)
-app.include_router(diagnostics.router)
-app.include_router(telemetry.router)
-app.include_router(settings.router)
-app.include_router(memory.router)
-app.include_router(tasks.router)
 
 class VoiceConnectionManager:
     def __init__(self):
@@ -95,6 +56,47 @@ class VoiceConnectionManager:
 
 voice_ws_manager = VoiceConnectionManager()
 
+async def voice_state_callback(state_or_data, transcript: str = None):
+    if isinstance(state_or_data, dict):
+        await voice_ws_manager.broadcast(state_or_data)
+    else:
+        await voice_ws_manager.broadcast({"state": str(state_or_data), "transcript": transcript})
+
+# Initialize Core Services
+ai_provider = AIRouter()
+tool_registry = ToolRegistry()
+memory_manager = MemoryManager()
+task_manager = TaskManager()
+computer_provider = WindowsComputerProvider()
+
+# Register Tools
+register_system_tools(tool_registry)
+register_windows_tools(tool_registry, computer_provider)
+register_web_tools(tool_registry)
+register_memory_tools(tool_registry, memory_manager)
+register_task_tools(tool_registry, task_manager)
+register_file_tools(tool_registry)
+register_vision_tools(tool_registry, computer_provider, ai_provider)
+
+# Initialize Agent, Voice, and Message Queue
+agent = AgentOrchestrator(ai_provider, tool_registry, memory_manager)
+voice_manager = VoiceManager()
+queue_manager = MessageQueueManager(agent, voice_manager, broadcast_callback=voice_state_callback)
+voice_manager.set_queue_manager(queue_manager)
+
+# Inject Agent and Services into endpoints
+endpoints.agent = agent
+endpoints.queue_manager = queue_manager
+memory.memory_manager = memory_manager
+tasks.task_manager = task_manager
+
+app.include_router(endpoints.router)
+app.include_router(diagnostics.router)
+app.include_router(telemetry.router)
+app.include_router(settings.router)
+app.include_router(memory.router)
+app.include_router(tasks.router)
+
 @app.websocket("/ws/voice")
 async def websocket_voice_endpoint(websocket: WebSocket):
     await voice_ws_manager.connect(websocket)
@@ -104,27 +106,25 @@ async def websocket_voice_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         voice_ws_manager.disconnect(websocket)
 
-async def voice_state_callback(state: str, transcript: str = None):
-    await voice_ws_manager.broadcast({"state": state, "transcript": transcript})
-
-
 @app.get("/")
 async def root():
     return {"status": "JARVIS Backend is running smoothly", "docs_url": "/docs"}
-
 
 @app.on_event("startup")
 async def startup_event():
     await ai_provider.initialize()
     asyncio.create_task(telemetry.telemetry_loop())
     
+    # Start Message Queue Worker
+    queue_manager.start()
+    
     # Start Background Task Scheduler Loop
     asyncio.create_task(task_manager.run_scheduler(agent=agent, voice_manager=voice_manager))
     
     # Start Voice Listening Loop
-    voice_manager.start_listening(voice_callback, voice_state_callback)
+    voice_manager.start_listening(voice_state_callback)
     
-    logger.info("JARVIS Backend Started with Voice Recognition & Task Scheduler Active")
+    logger.info("JARVIS Backend Started with Voice Recognition, Message Queue & Task Scheduler Active")
 
 @app.get("/health")
 async def health_check():

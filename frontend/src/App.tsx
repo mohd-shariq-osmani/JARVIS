@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -8,18 +8,9 @@ import Memory from './pages/Memory';
 import Tasks from './pages/Tasks';
 
 function App() {
-  const [status, setStatus] = useState<string>("CONNECTING");
-
   useEffect(() => {
     fetch('http://127.0.0.1:8000/health')
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'ok') {
-          setStatus("READY");
-        }
-      })
       .catch(err => {
-        setStatus("BACKEND OFFLINE");
         console.error("Backend connection failed:", err);
       });
   }, []);

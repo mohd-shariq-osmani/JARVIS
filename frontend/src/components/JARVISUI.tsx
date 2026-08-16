@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 const JARVISUI: React.FC = () => {
-  const [status, setStatus] = useState('READY');
+  const [status] = useState('READY');
   const [voiceState, setVoiceState] = useState('LISTENING');
   const [cpu, setCpu] = useState('0.0%');
   const [ram, setRam] = useState('0.0%');
