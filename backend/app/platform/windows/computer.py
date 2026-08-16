@@ -64,10 +64,12 @@ class WindowsComputerProvider:
             return "Error: Cannot run Windows commands on this OS."
             
         import glob
+        import subprocess
+        import difflib
         try:
             app_lower = app_name.lower().strip()
             
-            # Map aliases
+            # Map well-known aliases to their launch commands / URIs
             alias_map = {
                 "settings": "ms-settings:",
                 "windows settings": "ms-settings:",
@@ -82,33 +84,115 @@ class WindowsComputerProvider:
                 "vs code": "code",
                 "visual studio code": "code",
                 "explorer": "explorer",
-                "file explorer": "explorer"
+                "file explorer": "explorer",
+                "task manager": "taskmgr",
+                "cmd": "cmd",
+                "command prompt": "cmd",
+                "terminal": "wt",
+                "windows terminal": "wt",
+                "paint": "mspaint",
+                "wordpad": "wordpad",
+                "snip": "snippingtool",
+                "snipping tool": "snippingtool",
+                "spotify": "spotify",
+                "discord": "discord",
+                "vlc": "vlc",
+                "obs": "obs64",
+                "lm studio": "lm studio",
+                "lmstudio": "lm studio",
             }
             
-            target = alias_map.get(app_lower, app_name)
+            target = alias_map.get(app_lower)
 
-            # Direct URI or existing file
-            if target.startswith("ms-settings:") or os.path.exists(target):
-                os.system(f'start "" "{target}"')
+            # Direct URI (ms-settings:, etc.)
+            if target and target.startswith("ms-settings:"):
+                subprocess.Popen(["cmd.exe", "/c", "start", "", target], shell=False)
                 return f"Opened {app_name}"
 
-            # Search Start Menu shortcuts
-            paths = [
-                os.path.join(os.environ.get('PROGRAMDATA', ''), r'Microsoft\Windows\Start Menu\Programs\**\*.lnk'),
-                os.path.join(os.environ.get('APPDATA', ''), r'Microsoft\Windows\Start Menu\Programs\**\*.lnk')
+            # If alias resolved, try to run it directly
+            if target:
+                try:
+                    result = subprocess.run(["where", target], capture_output=True, text=True, timeout=3)
+                    if result.returncode == 0:
+                        subprocess.Popen(["cmd.exe", "/c", "start", "", target], shell=False)
+                        return f"Opened {app_name}."
+                except Exception:
+                    pass
+
+            # Search Start Menu shortcuts with fuzzy matching
+            start_menu_paths = [
+                os.path.join(os.environ.get('PROGRAMDATA', ''), r'Microsoft\Windows\Start Menu\Programs'),
+                os.path.join(os.environ.get('APPDATA', ''), r'Microsoft\Windows\Start Menu\Programs')
             ]
-            links = []
-            for p in paths:
-                links.extend(glob.glob(p, recursive=True))
-                
-            for link in links:
-                if app_lower in os.path.basename(link).lower():
-                    os.system(f'start "" "{link}"')
-                    return f"Found and opened {os.path.basename(link)} for {app_name}"
-            
-            # General start command
-            os.system(f'start "" "{target}"')
-            return f"Opened {app_name}"
+            all_links = []
+            for base in start_menu_paths:
+                for pattern in [r'**\*.lnk', r'**\*.url']:
+                    all_links.extend(glob.glob(os.path.join(base, pattern), recursive=True))
+
+            link_names = {os.path.splitext(os.path.basename(lnk))[0].lower(): lnk for lnk in all_links}
+
+            # 1. Exact substring match
+            matched_link = None
+            for name, path in link_names.items():
+                if app_lower in name or name in app_lower:
+                    matched_link = path
+                    break
+
+            # 2. Fuzzy match using difflib if no exact substring hit
+            if not matched_link:
+                # Also try individual keywords in the app name
+                keywords = [w for w in app_lower.split() if len(w) > 2]
+                for name, path in link_names.items():
+                    if keywords and all(kw in name for kw in keywords):
+                        matched_link = path
+                        break
+
+            if not matched_link:
+                closest = difflib.get_close_matches(app_lower, link_names.keys(), n=1, cutoff=0.4)
+                if closest:
+                    matched_link = link_names[closest[0]]
+
+            if matched_link:
+                subprocess.Popen(["cmd.exe", "/c", "start", "", matched_link], shell=False)
+                display = os.path.splitext(os.path.basename(matched_link))[0]
+                return f"Opened '{display}'."
+
+            # Search common install directories for .exe files
+            search_roots = [
+                os.environ.get('PROGRAMFILES', r'C:\Program Files'),
+                os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs'),
+                os.path.join(os.environ.get('APPDATA', '')),
+            ]
+            keywords = [w for w in app_lower.split() if len(w) > 2]
+            for root in search_roots:
+                if not os.path.exists(root):
+                    continue
+                try:
+                    for dirpath, dirnames, filenames in os.walk(root):
+                        # Skip deep paths to avoid long searches
+                        depth = dirpath.replace(root, '').count(os.sep)
+                        if depth > 3:
+                            dirnames.clear()
+                            continue
+                        for fname in filenames:
+                            if fname.endswith('.exe'):
+                                fname_lower = fname.lower().replace('.exe', '')
+                                if keywords and all(kw in fname_lower for kw in keywords):
+                                    full_exe = os.path.join(dirpath, fname)
+                                    subprocess.Popen(["cmd.exe", "/c", "start", "", full_exe], shell=False)
+                                    return f"Opened '{fname.replace('.exe', '')}'."
+                except Exception:
+                    pass
+
+            # Final fallback: PowerShell Start-Process with fuzzy name 
+            # This lets Windows search its own app registry (UWP/Store apps)
+            ps_cmd = f'Start-Process "{app_lower}" -ErrorAction SilentlyContinue'
+            ps_result = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True, text=True, timeout=5)
+            if ps_result.returncode == 0:
+                return f"Opened '{app_name}'."
+
+            return f"Could not find an application matching '{app_name}'. Try using the exact name shown on the Start Menu."
         except Exception as e:
             logger.error(f"Failed to open {app_name}: {e}")
             return f"Failed to open {app_name}: {str(e)}"

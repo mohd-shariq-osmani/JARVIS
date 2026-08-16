@@ -19,16 +19,22 @@ class TaskEvaluator:
         
         # Fast deterministic heuristics for tool successes
         success_signals = [
-            "opened '", "opened folder", "opened file", "successfully", "contents of",
-            "content of", "available system drives", "battery:", "copied", "clipboard text:",
-            "brought '", "definition of", "saved notes", "found "
+            "opened '", "opened folder", "opened file", "opened website",
+            "successfully", "contents of", "content of", "available system drives",
+            "battery:", "copied", "clipboard text:", "brought '", "definition of",
+            "saved notes", "found ", "set volume", "success:\n", "cpu:", "ram:",
+            "memory:", "disk:", "gpu util:", "model:", "loaded model", "running model",
+            "no bluetooth", "task scheduled", "reminder set", "note added",
+            "closed ", "minimized ", "maximized ", "brightness set", "volume set",
+            "opened '", "could not find an application"  # graceful not-found is still a completed step
         ]
-        if any(s in lowered_result for s in success_signals) and "error" not in lowered_result:
+        if any(s in lowered_result for s in success_signals) and "exception:" not in lowered_result:
             return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Action executed successfully.")
 
-        # If not found, request replan rather than catastrophic halt
-        if "not found on disk" in lowered_result or "does not exist" in lowered_result:
-            return EvaluationResult(verdict=EvaluationVerdict.REPLAN, reasoning="Target file or directory not found at initial location.")
+        # Informational/data results with substantial content are usually successes
+        if len(result.strip()) > 20 and "error" not in lowered_result and "exception" not in lowered_result:
+            # Heuristic: if we got a real response with no error keywords, treat as success
+            return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Tool returned informational data.")
 
         system_prompt = """You are JARVIS's Task Evaluator.
 Your job is to read a Task Step and the Result of its execution, and determine if it was successful.

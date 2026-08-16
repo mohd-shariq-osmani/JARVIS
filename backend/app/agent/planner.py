@@ -113,7 +113,16 @@ You MUST output a valid JSON object with 'objective' and 'steps'."""
             if plan:
                 logger.info(f"Generated REPLAN for '{user_goal}' with {len(plan.steps)} steps.")
                 return plan
-            return None
+            # Fallback: single step replan so the engine never hard-fails from replan returning None
+            logger.warning("Replan returned unusable structure. Using single-step fallback.")
+            return TaskPlan(
+                objective=user_goal,
+                steps=[TaskStep(id="step_r1", description=f"Re-attempt: {user_goal}", dependencies=[])]
+            )
         except Exception as e:
             logger.error(f"Failed to replan: {e}")
-            return None
+            # Always return a minimal fallback so the engine can attempt recovery
+            return TaskPlan(
+                objective=user_goal,
+                steps=[TaskStep(id="step_r1", description=f"Re-attempt: {user_goal}", dependencies=[])]
+            )

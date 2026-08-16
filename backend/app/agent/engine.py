@@ -83,8 +83,9 @@ class TaskEngine:
             if context.plan is None:
                 context.plan = await self.planner.replan(user_goal, context, available_tools)
                 if not context.plan:
+                    # Last resort: single-step fallback (should not normally happen)
                     context.state = TaskState.FAILED
-                    return "Failed to replan task."
+                    return await self._synthesize_final_response(user_goal, context) if context.history else "Unable to complete the task."
 
             # Find next ready step
             step = self._get_next_ready_step(context)
