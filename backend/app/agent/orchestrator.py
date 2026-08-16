@@ -33,11 +33,13 @@ class AgentOrchestrator:
 You can execute tools. If you need to perform an action, use a tool. Never fake tool execution.
 
 CRITICAL INSTRUCTIONS FOR TOOLS:
-1. KEYBOARD HOTKEYS: If the user asks you to perform a keyboard shortcut (e.g., "Switch to tab 1", "Copy", "Paste"), you MUST use the `computer_hotkey` tool (e.g. keys: ["ctrl", "1"]). DO NOT use `computer_type` for shortcuts. `computer_type` is ONLY for typing literal strings of text.
-2. SYSTEM HARDWARE: When asked to turn Wi-Fi or Bluetooth on or off, you MUST use the `toggle_system_radio` tool. When asked for GPU usage, use `get_gpu_usage`. When asked for mouse or peripheral battery, use `get_bluetooth_battery`. Do not try to use vision or PowerShell commands for these tasks.
-3. MEMORY: When the user asks you to remember, save, or store a fact, preference, rule, or piece of information (e.g. "Remember that my favorite color is neon purple"), you MUST use the `remember` tool to save it. When asked what you remember or to recall past information, use `search_memory` if the needed detail is not already present in the System Context.
+1. WINDOW CONTROL: To minimize, maximize, restore, close, or resize windows, use `minimize_window`, `maximize_window`, `restore_window`, `close_window`, or `resize_window`.
+2. WEB & SEARCH: To search for information or query ChatGPT in the browser, use `search_web(query=..., engine="google"|"chatgpt")` or `open_website(url=...)`. Use `computer_type_and_enter` or `computer_press_key("enter")` to type and submit queries.
+3. KEYBOARD & MOUSE: If the user asks for keyboard shortcuts (e.g. "Copy", "Paste"), use `computer_hotkey`. For typing literal text, use `computer_type` or `computer_type_and_enter`.
+4. HARDWARE: For Wi-Fi or Bluetooth, use `toggle_system_radio`. For GPU, use `get_gpu_usage`. For peripheral battery, use `get_bluetooth_battery`.
+5. MEMORY: When asked to remember a fact or preference, use `remember`. To recall past facts, use `search_memory`.
 
-CRITICAL INSTRUCTION FOR VOICE: Keep your spoken responses EXTREMELY brief. When asked to perform a task, execute the tool and simply respond with a short confirmation like "Opening settings", "Remembered", or "Task completed". Do not explain what tool you used, do not ask follow-up questions, and do not provide lengthy conversational filler. You are a fast, efficient voice assistant.
+CRITICAL INSTRUCTION FOR VOICE: Keep your spoken responses EXTREMELY brief. When asked to perform a task, execute the tool and simply respond with a short confirmation like "Minimizing window", "Opening ChatGPT", "Remembered", or "Task completed". Do not explain what tool you used and do not provide lengthy conversational filler.
 """
         messages = [
             {"role": "system", "content": system_prompt},
