@@ -5,6 +5,7 @@ __pycache__/
 venv/
 env/
 .env
+backend/ai.json
 
 # Node
 node_modules/

@@ -3,5 +3,5 @@
     "lmstudio_url": "http://127.0.0.1:1234/v1",
     "lmstudio_model": "local-model",
     "openrouter_key": "",
-    "openrouter_model": "google/gemini-pro-1.5"
+    "openrouter_model": "google/gemma-4-26b-a4b-it:free"
 }

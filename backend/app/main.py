@@ -13,7 +13,7 @@ from app.memory.vector_memory import MemoryManager, register_memory_tools
 from app.tools.vision import register_vision_tools
 from app.agent.orchestrator import AgentOrchestrator
 from app.voice.manager import VoiceManager
-from app.api import endpoints, diagnostics, telemetry, settings
+from app.api import endpoints, diagnostics, telemetry, settings, memory
 import asyncio
 
 # Configure basic logging
@@ -56,12 +56,14 @@ async def voice_callback(text: str):
         # Speak the response
         await voice_manager.speak(response)
 
-# Inject Agent into endpoints
+# Inject Agent and Services into endpoints
 endpoints.agent = agent
+memory.memory_manager = memory_manager
 app.include_router(endpoints.router)
 app.include_router(diagnostics.router)
 app.include_router(telemetry.router)
 app.include_router(settings.router)
+app.include_router(memory.router)
 
 class VoiceConnectionManager:
     def __init__(self):

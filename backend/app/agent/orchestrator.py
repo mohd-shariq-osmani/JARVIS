@@ -35,17 +35,22 @@ You can execute tools. If you need to perform an action, use a tool. Never fake 
 CRITICAL INSTRUCTIONS FOR TOOLS:
 1. KEYBOARD HOTKEYS: If the user asks you to perform a keyboard shortcut (e.g., "Switch to tab 1", "Copy", "Paste"), you MUST use the `computer_hotkey` tool (e.g. keys: ["ctrl", "1"]). DO NOT use `computer_type` for shortcuts. `computer_type` is ONLY for typing literal strings of text.
 2. SYSTEM HARDWARE: When asked to turn Wi-Fi or Bluetooth on or off, you MUST use the `toggle_system_radio` tool. When asked for GPU usage, use `get_gpu_usage`. When asked for mouse or peripheral battery, use `get_bluetooth_battery`. Do not try to use vision or PowerShell commands for these tasks.
+3. MEMORY: When the user asks you to remember, save, or store a fact, preference, rule, or piece of information (e.g. "Remember that my favorite color is neon purple"), you MUST use the `remember` tool to save it. When asked what you remember or to recall past information, use `search_memory` if the needed detail is not already present in the System Context.
 
-CRITICAL INSTRUCTION FOR VOICE: Keep your spoken responses EXTREMELY brief. When asked to perform a task, execute the tool and simply respond with a short confirmation like "Opening settings" or "Task completed". Do not explain what tool you used, do not ask follow-up questions, and do not provide lengthy conversational filler. You are a fast, efficient voice assistant.
+CRITICAL INSTRUCTION FOR VOICE: Keep your spoken responses EXTREMELY brief. When asked to perform a task, execute the tool and simply respond with a short confirmation like "Opening settings", "Remembered", or "Task completed". Do not explain what tool you used, do not ask follow-up questions, and do not provide lengthy conversational filler. You are a fast, efficient voice assistant.
 """
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"System context: {context}\n\nUser request: {user_input}"}
         ]
 
+        # Record user interaction in session context
+        await self.memory.add_session_context(f"User: {user_input}")
+
         # Get available tool schemas
         available_tools = self.tools.get_tool_schemas()
 
+        final_response = ""
         if available_tools:
             max_iterations = 5
             for _ in range(max_iterations):
@@ -75,10 +80,14 @@ CRITICAL INSTRUCTION FOR VOICE: Keep your spoken responses EXTREMELY brief. When
                     # Loop continues, model will process the tool results in the next iteration
                 else:
                     # Model provided a final response without tools
-                    return response.get("content", "")
+                    final_response = response.get("content", "")
+                    break
             
-            # If we hit max iterations, just return the last message or a fallback
-            return "Task too complex or looped too many times."
+            if not final_response:
+                final_response = "Task too complex or looped too many times."
         else:
             # No tools available, simple chat
-            return await self.ai.chat(messages)
+            final_response = await self.ai.chat(messages)
+
+        await self.memory.add_session_context(f"JARVIS: {final_response}")
+        return final_response
