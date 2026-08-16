@@ -110,9 +110,25 @@ class AIRouter(AIProvider):
             return await self.lmstudio.generate_with_tools(messages, tools, model=local_model)
 
     async def generate_structured(self, messages: List[Dict[str, Any]], schema: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
-        provider = self.get_provider()
-        target_model = (self.config.openrouter_model if self.active_provider_name == "openrouter" else self.config.lmstudio_model) if not model else model
-        return await provider.generate_structured(messages, schema, model=target_model)
+        if self.active_provider_name == "auto":
+            try:
+                local_model = model or self.config.lmstudio_model
+                res = await self.lmstudio.generate_structured(messages, schema, model=local_model)
+                if res and isinstance(res, dict) and len(res) > 0:
+                    return res
+                logger.warning("LM Studio structured generation returned empty in auto mode, falling back to OpenRouter...")
+            except Exception as e:
+                logger.warning(f"LM Studio structured generation error in auto mode: {e}. Falling back to OpenRouter...")
+            
+            cloud_model = model or self.config.openrouter_model
+            return await self.openrouter.generate_structured(messages, schema, model=cloud_model)
+
+        elif self.active_provider_name == "openrouter":
+            cloud_model = model or self.config.openrouter_model
+            return await self.openrouter.generate_structured(messages, schema, model=cloud_model)
+        else:
+            local_model = model or self.config.lmstudio_model
+            return await self.lmstudio.generate_structured(messages, schema, model=local_model)
 
     async def vision(self, prompt: str, base64_image: str, model: Optional[str] = None) -> str:
         if self.active_provider_name == "openrouter":

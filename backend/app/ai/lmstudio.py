@@ -116,9 +116,9 @@ class LMStudioProvider(AIProvider):
             model = models[0] if models else "local-model"
             
         system_instruction = (
-            "You must respond ONLY with valid JSON that satisfies the following JSON schema:\n"
+            "You are a structured reasoning engine. You must respond ONLY with a single valid JSON object that satisfies this JSON schema:\n"
             f"{json.dumps(schema, indent=2)}\n"
-            "Do not include markdown code blocks, just output the raw JSON object."
+            "Do not include any conversational filler or markdown formatting outside the JSON object. Output raw JSON ONLY."
         )
         
         structured_messages = []
@@ -144,10 +144,28 @@ class LMStudioProvider(AIProvider):
             response = await self.client.post(f"{self.base_url}/chat/completions", json=payload)
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
-            # Try parsing to ensure it's valid JSON
-            return json.loads(content)
+            
+            # Robust JSON extraction
+            content_clean = content.strip()
+            if content_clean.startswith("```json"):
+                content_clean = content_clean[7:]
+            elif content_clean.startswith("```"):
+                content_clean = content_clean[3:]
+            if content_clean.endswith("```"):
+                content_clean = content_clean[:-3]
+            content_clean = content_clean.strip()
+            
+            try:
+                return json.loads(content_clean)
+            except json.JSONDecodeError:
+                # Find outermost { ... }
+                start = content.find('{')
+                end = content.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(content[start:end+1])
+                raise
         except Exception as e:
-            logger.error(f"Structured generation failed: {e}")
+            logger.error(f"Structured generation failed in LM Studio: {e}")
             return {}
 
     async def vision(self, prompt: str, base64_image: str, model: Optional[str] = None) -> str:

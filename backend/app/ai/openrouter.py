@@ -126,7 +126,61 @@ class OpenRouterProvider(AIProvider):
             return {"content": f"Cloud Error: {e}"}
 
     async def generate_structured(self, messages: List[Dict[str, Any]], schema: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
-        pass
+        if not self.api_key:
+            return {}
+
+        model = model or "google/gemma-4-26b-a4b-it:free"
+        
+        system_instruction = (
+            "You are a structured reasoning engine. You must respond ONLY with a single valid JSON object that satisfies this JSON schema:\n"
+            f"{json.dumps(schema, indent=2)}\n"
+            "Do not include any markdown code blocks, conversational text, or explanation outside the JSON object. Output raw JSON ONLY."
+        )
+        
+        structured_messages = []
+        system_added = False
+        for msg in messages:
+            if msg["role"] == "system":
+                structured_messages.append({"role": "system", "content": f"{msg['content']}\n\n{system_instruction}"})
+                system_added = True
+            else:
+                structured_messages.append(msg)
+                
+        if not system_added:
+            structured_messages.insert(0, {"role": "system", "content": system_instruction})
+            
+        payload = {
+            "model": model,
+            "messages": structured_messages,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        
+        try:
+            response = await self.client.post(f"{self.base_url}/chat/completions", json=payload)
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            
+            content_clean = content.strip()
+            if content_clean.startswith("```json"):
+                content_clean = content_clean[7:]
+            elif content_clean.startswith("```"):
+                content_clean = content_clean[3:]
+            if content_clean.endswith("```"):
+                content_clean = content_clean[:-3]
+            content_clean = content_clean.strip()
+            
+            try:
+                return json.loads(content_clean)
+            except json.JSONDecodeError:
+                start = content.find('{')
+                end = content.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(content[start:end+1])
+                raise
+        except Exception as e:
+            logger.error(f"Cloud Structured generation failed: {e}")
+            return {}
 
     async def vision(self, prompt: str, base64_image: str, model: Optional[str] = None) -> str:
         if not self.api_key:

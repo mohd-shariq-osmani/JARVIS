@@ -25,7 +25,6 @@ class TaskEngine:
             
         for step in context.plan.steps:
             if not step.completed:
-                # Check if all dependencies are completed
                 deps_met = True
                 for dep_id in step.dependencies:
                     dep_step = next((s for s in context.plan.steps if s.id == dep_id), None)
@@ -38,25 +37,43 @@ class TaskEngine:
         return None
 
     def _all_steps_completed(self, context: TaskContext) -> bool:
-        if not context.plan:
+        if not context.plan or not context.plan.steps:
             return False
         return all(step.completed for step in context.plan.steps)
+
+    async def _synthesize_final_response(self, user_goal: str, context: TaskContext) -> str:
+        """Synthesizes a user-friendly summary of all steps and findings."""
+        history_summary = ""
+        for i, event in enumerate(context.history):
+            if "step" in event and "result" in event:
+                history_summary += f"Step {i+1} [{event['step']}]:\n{event['result']}\n\n"
+
+        prompt = [
+            {"role": "system", "content": "You are JARVIS. You have just completed a complex multi-step task. Synthesize the findings and actions into a clear, helpful, and concise final response for the user."},
+            {"role": "user", "content": f"Original Goal: {user_goal}\n\nExecution Log:\n{history_summary}\n\nProvide the final response to the user:"}
+        ]
+        
+        try:
+            return await self.ai.chat(prompt)
+        except Exception:
+            return f"Completed multi-step task: {user_goal}.\n\n" + "\n".join([f"- {e.get('step')}: {e.get('result')}" for e in context.history if 'step' in e])
 
     async def execute_task(self, user_goal: str, memory_context: str) -> str:
         logger.info(f"Starting complex task engine for goal: {user_goal}")
         
         context = TaskContext(state=TaskState.RUNNING, memory_context=memory_context)
+        available_tools = self.tools.get_tool_schemas()
         
         # Initial Planning
-        available_tools = self.tools.get_tool_schemas()
         context.plan = await self.planner.plan(user_goal, context, available_tools)
         
         if not context.plan:
             context.state = TaskState.FAILED
-            return "Failed to generate an initial plan for the task."
+            return "Failed to generate a plan for the task."
 
-        max_loops = 15  # Safety threshold
+        max_loops = 15
         loops = 0
+        step_retry_counts: Dict[str, int] = {}
         
         while context.state == TaskState.RUNNING and loops < max_loops:
             loops += 1
@@ -66,35 +83,33 @@ class TaskEngine:
                 context.plan = await self.planner.replan(user_goal, context, available_tools)
                 if not context.plan:
                     context.state = TaskState.FAILED
-                    return "Failed to replan."
+                    return "Failed to replan task."
 
-            # Find next step
+            # Find next ready step
             step = self._get_next_ready_step(context)
             
             if not step:
-                # No more ready steps. Are we done?
                 if self._all_steps_completed(context):
                     # Verification phase
                     verification = await self.verifier.verify(user_goal, context)
                     if verification.verified:
                         context.state = TaskState.COMPLETED
-                        return f"Task completed successfully. Verification: {verification.reasoning}"
+                        return await self._synthesize_final_response(user_goal, context)
                     else:
-                        logger.info("Verification failed. Forcing a replan.")
+                        logger.info(f"Verification indicated missing items: {verification.missing}. Replanning...")
                         context.plan = None
                         context.history.append({"event": "verification_failed", "reasoning": verification.reasoning})
                         continue
                 else:
                     context.state = TaskState.FAILED
-                    return "Deadlock detected: Not all steps completed, but no step is ready to run."
+                    return "Execution error: Dependent steps could not resolve."
 
             # Execute step
             result = await self.executor.execute_step(step, context)
             
-            # Evaluate result
+            # Evaluate step result
             evaluation = await self.evaluator.evaluate(step, result)
             
-            # Update history
             context.history.append({
                 "step": step.description,
                 "result": result,
@@ -107,20 +122,26 @@ class TaskEngine:
                 step.result = result
             
             elif evaluation.verdict == EvaluationVerdict.RETRY:
-                logger.info(f"Retrying step {step.id}")
-                # We simply loop again, the step is not completed, so it will be picked up again
-                # A retry counter should ideally be implemented to prevent infinite loops on RETRY
+                count = step_retry_counts.get(step.id, 0) + 1
+                step_retry_counts[step.id] = count
+                if count >= 3:
+                    logger.warning(f"Step {step.id} exceeded retry limit. Replanning...")
+                    context.plan = None
+                else:
+                    logger.info(f"Retrying step {step.id} (attempt {count})...")
                 
             elif evaluation.verdict == EvaluationVerdict.REPLAN:
-                logger.info(f"Replanning required after step {step.id} failure.")
+                logger.info(f"Replanning requested after step {step.id}.")
                 context.plan = None
                 
             elif evaluation.verdict == EvaluationVerdict.FAIL:
                 logger.error(f"Step {step.id} failed catastrophically.")
                 context.state = TaskState.FAILED
-                return f"Task failed at step: {step.description}. Reason: {evaluation.reasoning}"
+                return f"Task halted at step '{step.description}'. Reason: {evaluation.reasoning}"
                 
         if context.state != TaskState.COMPLETED:
-            return "Task engine exceeded maximum iterations or was interrupted."
+            if context.history:
+                return await self._synthesize_final_response(user_goal, context)
+            return "Task engine exceeded maximum execution steps."
             
         return "Task completed."
