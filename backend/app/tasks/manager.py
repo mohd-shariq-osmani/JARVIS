@@ -24,6 +24,45 @@ class Task(BaseModel):
     last_run: Optional[str] = None
     last_result: Optional[str] = None
 
+import re
+
+def parse_time_to_24h(val: Any) -> str:
+    """Parses any time format (e.g. '1:45 PM', '145 PM', '1.45 pm', '13:45', '145') into 24-hour HH:MM format."""
+    s = str(val).strip().lower()
+    
+    # Normalize p.m. -> pm, a.m. -> am
+    s = re.sub(r'\bp\.?m\.?\b', 'pm', s)
+    s = re.sub(r'\ba\.?m\.?\b', 'am', s)
+    
+    # 3-digit: '145 pm' -> '1:45 pm', '930 am' -> '9:30 am'
+    s = re.sub(r'\b([1-9])([0-5][0-9])\s*(am|pm)\b', r'\1:\2 \3', s)
+    # 4-digit: '1045 pm' -> '10:45 pm', '1130 am' -> '11:30 am', '1245 pm' -> '12:45 pm'
+    s = re.sub(r'\b(1[0-2])([0-5][0-9])\s*(am|pm)\b', r'\1:\2 \3', s)
+
+    # 1. Check with AM/PM
+    m_ampm = re.search(r'\b(\d{1,2})[:.](\d{2})\s*(am|pm)\b', s)
+    if m_ampm:
+        hr, mn, meridiem = int(m_ampm.group(1)), int(m_ampm.group(2)), m_ampm.group(3)
+        if meridiem == 'pm' and hr < 12: hr += 12
+        if meridiem == 'am' and hr == 12: hr = 0
+        return f"{hr:02d}:{mn:02d}"
+
+    # 2. Check bare number with am/pm (e.g. '1 pm', '2 pm')
+    m_bare = re.search(r'\b(\d{1,2})\s*(am|pm)\b', s)
+    if m_bare:
+        hr, meridiem = int(m_bare.group(1)), m_bare.group(2)
+        if meridiem == 'pm' and hr < 12: hr += 12
+        if meridiem == 'am' and hr == 12: hr = 0
+        return f"{hr:02d}:00"
+
+    # 3. Check 24h format HH:MM
+    m_24 = re.search(r'\b(\d{1,2})[:.](\d{2})\b', s)
+    if m_24:
+        hr, mn = int(m_24.group(1)), int(m_24.group(2))
+        return f"{hr:02d}:{mn:02d}"
+
+    return str(val)
+
 class TaskManager:
     def __init__(self):
         os.makedirs(os.path.dirname(TASKS_FILE), exist_ok=True)
@@ -65,9 +104,9 @@ class TaskManager:
             interval = float(schedule_value)
             return now + interval
         elif schedule_type == "daily":
-            # schedule_value is "HH:MM" 24h format
             try:
-                target_hour, target_minute = map(int, str(schedule_value).strip().split(":"))
+                time_24 = parse_time_to_24h(schedule_value)
+                target_hour, target_minute = map(int, time_24.strip().split(":"))
                 now_dt = datetime.now()
                 target_dt = now_dt.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
                 if target_dt <= now_dt:
@@ -77,6 +116,45 @@ class TaskManager:
                 logger.error(f"Invalid daily time format: {schedule_value} ({e})")
                 return now + 3600
         return now + 60
+
+    def edit_task(self, query: str, new_time: str = "", new_title: str = "") -> Optional[Task]:
+        """Edits an existing task or reminder by query matching title/id."""
+        q_clean = query.strip().lower()
+        tasks = list(self.tasks.values())
+        if not tasks:
+            return None
+
+        target_task = None
+        # 1. Match by ID
+        for t in tasks:
+            if t.id == query or t.id.startswith(query):
+                target_task = t
+                break
+
+        # 2. Match by title substring
+        if not target_task:
+            for t in reversed(tasks):
+                if q_clean in t.title.lower() or t.title.lower() in q_clean:
+                    target_task = t
+                    break
+
+        # 3. Fallback to latest task
+        if not target_task and tasks:
+            target_task = tasks[-1]
+
+        if target_task:
+            if new_title:
+                target_task.title = new_title.strip()
+            if new_time:
+                target_task.schedule_type = "daily"
+                target_task.schedule_value = parse_time_to_24h(new_time)
+                target_task.next_run = self.calculate_next_run("daily", target_task.schedule_value)
+                target_task.status = "active"
+            self.save_tasks()
+            logger.info(f"Updated task '{target_task.title}' to time: {target_task.schedule_value}")
+            return target_task
+
+        return None
 
     def create_task(self, title: str, action: str, schedule_type: str = "once", schedule_value: Any = 60, description: str = "") -> Task:
         task_id = str(uuid.uuid4())
@@ -124,23 +202,35 @@ class TaskManager:
         return None
 
     async def execute_task(self, task: Task):
-        logger.info(f"Executing scheduled task '{task.title}' ({task.action})")
+        logger.info(f"Executing scheduled task '{task.title}' (action: {task.action})")
         timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         task.last_run = timestamp_str
 
         try:
-            result = ""
-            if self.agent:
-                result = await self.agent.handle_request(task.action)
-            else:
-                result = f"Notification: {task.title}"
+            action_lower = task.action.lower().strip()
+            
+            # Check if this task is an active command to execute vs a user reminder/notification
+            is_command = (
+                task.action.startswith("COMMAND:") or 
+                task.action.startswith("RUN:") or
+                any(action_lower.startswith(prefix) for prefix in ["open ", "search ", "get ", "check ", "organize ", "play "])
+            ) and "scheduled a reminder" not in action_lower
 
-            task.last_result = result
-            logger.info(f"Task '{task.title}' completed with result: {result}")
+            if is_command and self.agent:
+                cmd_text = task.action.removeprefix("COMMAND:").removeprefix("RUN:").strip()
+                result = await self.agent.handle_request(cmd_text)
+                alert_text = f"Scheduled task '{task.title}' completed. {result}"
+            else:
+                # Clean reminder / notification
+                reminder_content = task.description or task.title
+                alert_text = f"Reminder alert: {task.title}. Time to {reminder_content.lower().removeprefix('reminder:').strip()}."
+
+            task.last_result = alert_text
+            logger.info(f"Task '{task.title}' finished: {alert_text}")
 
             # Speak outcome if voice is active
-            if self.voice_manager and result:
-                await self.voice_manager.speak(f"Scheduled task alert: {task.title}. {result}")
+            if self.voice_manager and alert_text:
+                await self.voice_manager.speak(alert_text)
 
             if task.schedule_type == "once":
                 task.status = "completed"

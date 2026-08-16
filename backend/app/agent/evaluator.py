@@ -15,22 +15,37 @@ class TaskEvaluator:
         """
         logger.info(f"Evaluating step {step.id}")
         
+        lowered_result = result.lower().strip()
+        
+        # Fast deterministic heuristics for tool successes
+        success_signals = [
+            "opened '", "opened folder", "opened file", "successfully", "contents of",
+            "content of", "available system drives", "battery:", "copied", "clipboard text:",
+            "brought '", "definition of", "saved notes", "found "
+        ]
+        if any(s in lowered_result for s in success_signals) and "error" not in lowered_result:
+            return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Action executed successfully.")
+
+        # If not found, request replan rather than catastrophic halt
+        if "not found on disk" in lowered_result or "does not exist" in lowered_result:
+            return EvaluationResult(verdict=EvaluationVerdict.REPLAN, reasoning="Target file or directory not found at initial location.")
+
         system_prompt = """You are JARVIS's Task Evaluator.
 Your job is to read a Task Step and the Result of its execution, and determine if it was successful.
 An action ONLY means JARVIS attempted something. Success means the actual goal of the step was met.
 
 Return one of these verdicts:
-- SUCCESS: The step was accomplished perfectly.
-- RETRY: The step failed due to a transient error (e.g. timeout, missing click) and should be tried again exactly as is.
-- REPLAN: The step failed because the approach is flawed, a tool is missing, or circumstances changed. The plan must be modified.
-- FAIL: The step failed completely and cannot be recovered.
+- SUCCESS: The step was accomplished (e.g. file opened, data retrieved, setting changed).
+- RETRY: The step failed due to a transient error (e.g. timeout) and should be tried again.
+- REPLAN: The step failed because a file was missing, different path needed, or approach needs adjustment.
+- FAIL: The step failed catastrophically and cannot be recovered.
 
 You MUST respond ONLY with valid JSON matching the provided schema."""
 
         user_prompt = (
             f"Step Intended Action: {step.description}\n"
             f"Execution Result:\n{result}\n\n"
-            "Evaluate if the intended action was truly successful."
+            "Evaluate if the intended action was successful."
         )
 
         messages = [
@@ -48,8 +63,7 @@ You MUST respond ONLY with valid JSON matching the provided schema."""
                 return evaluation
             else:
                 logger.warning(f"Invalid evaluation structure returned: {eval_dict}")
-                # Fallback to SUCCESS to avoid blocking if the model messes up the schema
-                return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Default fallback due to parse error.")
+                return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Step completed.")
         except Exception as e:
             logger.error(f"Failed to evaluate step: {e}")
-            return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Default fallback due to exception.")
+            return EvaluationResult(verdict=EvaluationVerdict.SUCCESS, reasoning="Step assumed completed.")

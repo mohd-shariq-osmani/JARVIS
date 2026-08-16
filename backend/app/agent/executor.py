@@ -47,7 +47,12 @@ If a tool is needed, call it. When tool results are provided, provide a clear, c
                 response = await self.ai.generate_with_tools(messages, available_tools)
                 
                 if response.get("tool_calls"):
-                    messages.append(response)
+                    clean_assistant_msg = {
+                        "role": "assistant",
+                        "content": response.get("content") or None,
+                        "tool_calls": response.get("tool_calls")
+                    }
+                    messages.append(clean_assistant_msg)
                     
                     for tool_call in response["tool_calls"]:
                         tool_name = tool_call["function"]["name"]
@@ -60,13 +65,14 @@ If a tool is needed, call it. When tool results are provided, provide a clear, c
                             tool_res_str = f"Tool '{tool_name}' returned: {result}"
                         except Exception as e:
                             tool_res_str = f"Tool '{tool_name}' failed with error: {e}"
+                            result = tool_res_str
                             
                         step_outputs.append(tool_res_str)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
                             "name": tool_name,
-                            "content": str(result) if 'result' in locals() else str(tool_res_str)
+                            "content": str(result)
                         })
                 else:
                     final_text = response.get("content", "")

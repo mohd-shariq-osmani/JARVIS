@@ -36,3 +36,23 @@ async def stop_chat_endpoint():
         await queue_manager.stop_all()
         return {"status": "success", "message": "All execution and speech halted."}
     return {"status": "ok"}
+
+class AccessResponse(BaseModel):
+    request_id: str
+    grant: bool
+
+@router.get("/api/access/requests")
+async def get_access_requests():
+    from app.security.access_manager import access_manager
+    return [r.dict() for r in access_manager.pending_requests.values() if r.status == "pending"]
+
+@router.post("/api/access/respond")
+async def respond_access_request(body: AccessResponse):
+    from app.security.access_manager import access_manager
+    success = access_manager.respond_to_request(body.request_id, body.grant)
+    return {"status": "ok", "success": success, "decision": "granted" if body.grant else "denied"}
+
+@router.get("/api/access/authorized")
+async def get_authorized_resources():
+    from app.security.access_manager import access_manager
+    return {"authorized": list(access_manager.authorized_resources)}

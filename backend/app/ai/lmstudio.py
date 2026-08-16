@@ -137,7 +137,10 @@ class LMStudioProvider(AIProvider):
             "model": model,
             "messages": structured_messages,
             "temperature": 0.1,
-            "response_format": {"type": "json_object"}
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": schema}
+            }
         }
         
         try:
@@ -165,7 +168,23 @@ class LMStudioProvider(AIProvider):
                     return json.loads(content[start:end+1])
                 raise
         except Exception as e:
-            logger.error(f"Structured generation failed in LM Studio: {e}")
+            logger.warning(f"json_schema generation failed in LM Studio ({e}), attempting prompt-only JSON...")
+            try:
+                # Fallback to plain prompt without response_format
+                fallback_payload = {
+                    "model": model,
+                    "messages": structured_messages,
+                    "temperature": 0.1
+                }
+                fb_res = await self.client.post(f"{self.base_url}/chat/completions", json=fallback_payload)
+                fb_res.raise_for_status()
+                fb_content = fb_res.json()["choices"][0]["message"]["content"]
+                start = fb_content.find('{')
+                end = fb_content.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(fb_content[start:end+1])
+            except Exception as fb_err:
+                logger.error(f"Structured generation fallback failed: {fb_err}")
             return {}
 
     async def vision(self, prompt: str, base64_image: str, model: Optional[str] = None) -> str:

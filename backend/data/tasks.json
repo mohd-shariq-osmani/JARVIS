@@ -1,15 +1,1 @@
-[
-    {
-        "id": "5f092c88-cc5e-4910-b816-863638b7d45b",
-        "title": "Tool Created Task",
-        "description": "",
-        "action": "Speak reminder",
-        "schedule_type": "once",
-        "schedule_value": 120,
-        "status": "completed",
-        "created_at": "2026-08-16 12:44:40",
-        "next_run": 1786864600.1165981,
-        "last_run": "2026-08-16 12:48:04",
-        "last_result": "What should I remind you about?"
-    }
-]
+[]

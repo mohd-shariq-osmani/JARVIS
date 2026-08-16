@@ -10,7 +10,10 @@ from app.tools.registry import ToolRegistry
 from app.tools.system_tools import register_system_tools
 from app.tools.files import register_file_tools
 from app.tools.web_tools import register_web_tools
+from app.tools.online_tools import register_online_tools
+from app.tools.productivity_tools import register_productivity_tools
 from app.platform.windows.computer import WindowsComputerProvider, register_windows_tools
+from app.platform.windows.system_control import register_system_control_tools
 from app.memory.vector_memory import MemoryManager, register_memory_tools
 from app.tasks.manager import TaskManager
 from app.tools.task_tools import register_task_tools
@@ -69,16 +72,22 @@ memory_manager = MemoryManager()
 task_manager = TaskManager()
 computer_provider = WindowsComputerProvider()
 
-# Register Tools
+# Register All Tool Suites
 register_system_tools(tool_registry)
 register_windows_tools(tool_registry, computer_provider)
+register_system_control_tools(tool_registry)
 register_web_tools(tool_registry)
+register_online_tools(tool_registry)
+register_productivity_tools(tool_registry)
 register_memory_tools(tool_registry, memory_manager)
 register_task_tools(tool_registry, task_manager)
 register_file_tools(tool_registry)
 register_vision_tools(tool_registry, computer_provider, ai_provider)
 
-# Initialize Agent, Voice, and Message Queue
+# Initialize Agent, Voice, Message Queue, and Access Manager
+from app.security.access_manager import access_manager
+access_manager.set_broadcast_callback(voice_state_callback)
+
 agent = AgentOrchestrator(ai_provider, tool_registry, memory_manager)
 voice_manager = VoiceManager()
 queue_manager = MessageQueueManager(agent, voice_manager, broadcast_callback=voice_state_callback)

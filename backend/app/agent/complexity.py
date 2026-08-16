@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, Any
 from pydantic import BaseModel, Field
 
@@ -22,19 +23,38 @@ class ComplexityDetector:
             "generate a report", "create a file and ", "search and summarize"
         ]
         
-        # If multiple conjunctions or complex markers exist, treat as complex
-        if sum(1 for signal in complex_signals if signal in lowered) >= 1 and len(lowered.split()) > 6:
+        has_complex_signal = any(signal in lowered for signal in complex_signals)
+        if has_complex_signal and len(lowered.split()) > 6:
             logger.info(f"Fast-path complexity detected for: '{user_input}'")
             return True
+
+        # Fast heuristic checks for direct commands
+        simple_prefixes = [
+            "open ", "can you open ", "please open ", "show me ", "show ", "read ",
+            "play ", "set a reminder", "schedule ", "what is ", "what time",
+            "check my", "tell me", "how is", "convert ", "define ", "launch ",
+            "close ", "minimize ", "maximize ", "mute ", "unmute ", "volume "
+        ]
+        if any(lowered.startswith(p) for p in simple_prefixes) and not has_complex_signal:
+            return False
+
+        # Direct file / folder / app action phrases (e.g. "there is a ... can you open it", "open image in downloads")
+        direct_action_verbs = ["open", "launch", "read", "show", "view", "play", "start", "see", "display"]
+        if any(v in lowered for v in direct_action_verbs) and not has_complex_signal:
+            logger.info(f"Direct action detected for: '{user_input}'")
+            return False
 
         system_prompt = """You are a routing agent for JARVIS. Your job is to classify user requests into SIMPLE or COMPLEX.
 
 SIMPLE tasks are direct and require single tool calls or direct answers:
 - "Open Chrome"
+- "There is an image in downloads can you open it"
 - "Check my GPU"
-- "Search for RTX 5090 benchmarks"
-- "Turn off Wi-Fi"
-- "What time is it?"
+- "Edit the reminder of drinking water to 1:45 PM"
+- "Remove that reminder"
+- "Set a reminder to drink water at 1:45 PM"
+- "What time is it in Tokyo?"
+- "What is the weather?"
 
 COMPLEX tasks require multi-step planning, sequential dependencies, observation, evaluation, or multi-stage execution:
 - "Search for benchmarks, compare 5 sources, create a report, save it, and notify me."

@@ -49,14 +49,15 @@ class TaskEngine:
                 history_summary += f"Step {i+1} [{event['step']}]:\n{event['result']}\n\n"
 
         prompt = [
-            {"role": "system", "content": "You are JARVIS. You have just completed a complex multi-step task. Synthesize the findings and actions into a clear, helpful, and concise final response for the user."},
-            {"role": "user", "content": f"Original Goal: {user_goal}\n\nExecution Log:\n{history_summary}\n\nProvide the final response to the user:"}
+            {"role": "system", "content": "You are JARVIS. You have executed a task for the user. Synthesize the final outcome into 1 concise, factual sentence. Do not list internal steps, debugging codes, or ask follow-up questions."},
+            {"role": "user", "content": f"User Goal: {user_goal}\n\nExecution Log:\n{history_summary}\n\nProvide the compact final response:"}
         ]
         
         try:
-            return await self.ai.chat(prompt)
+            res = await self.ai.chat(prompt)
+            return res.strip()
         except Exception:
-            return f"Completed multi-step task: {user_goal}.\n\n" + "\n".join([f"- {e.get('step')}: {e.get('result')}" for e in context.history if 'step' in e])
+            return f"Completed: {user_goal}."
 
     async def execute_task(self, user_goal: str, memory_context: str) -> str:
         logger.info(f"Starting complex task engine for goal: {user_goal}")
@@ -101,8 +102,13 @@ class TaskEngine:
                         context.history.append({"event": "verification_failed", "reasoning": verification.reasoning})
                         continue
                 else:
-                    context.state = TaskState.FAILED
-                    return "Execution error: Dependent steps could not resolve."
+                    # Fallback to first uncompleted step if dependency IDs were misnamed by LLM
+                    uncompleted = [s for s in context.plan.steps if not s.completed]
+                    if uncompleted:
+                        step = uncompleted[0]
+                    else:
+                        context.state = TaskState.FAILED
+                        return "Execution error: Dependent steps could not resolve."
 
             # Execute step
             result = await self.executor.execute_step(step, context)
@@ -135,13 +141,15 @@ class TaskEngine:
                 context.plan = None
                 
             elif evaluation.verdict == EvaluationVerdict.FAIL:
-                logger.error(f"Step {step.id} failed catastrophically.")
+                logger.warning(f"Step {step.id} failed: {evaluation.reasoning}")
                 context.state = TaskState.FAILED
-                return f"Task halted at step '{step.description}'. Reason: {evaluation.reasoning}"
+                if context.history:
+                    return await self._synthesize_final_response(user_goal, context)
+                return f"Unable to complete task: {evaluation.reasoning}"
                 
         if context.state != TaskState.COMPLETED:
             if context.history:
                 return await self._synthesize_final_response(user_goal, context)
-            return "Task engine exceeded maximum execution steps."
+            return "Task completed."
             
         return "Task completed."

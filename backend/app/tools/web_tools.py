@@ -4,9 +4,96 @@ import urllib.parse
 import logging
 import os
 import asyncio
+import datetime
+import pytz
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("WebTools")
+
+async def get_current_time(location: str = "", **kwargs) -> str:
+    """
+    Gets the current live time, date, day of week, and timezone for any city, country, or location worldwide (or local system time).
+    
+    Args:
+        location: City, country, or timezone name (e.g. 'Pakistan', 'London', 'New York', 'Tokyo', 'Sydney', 'India', 'California'). If empty, returns local time.
+    """
+    loc_clean = (location or kwargs.get("city") or kwargs.get("country") or "").strip().lower()
+    
+    # Common country and city aliases
+    alias_tz_map = {
+        "": None,
+        "local": None,
+        "here": None,
+        "pakistan": "Asia/Karachi",
+        "karachi": "Asia/Karachi",
+        "lahore": "Asia/Karachi",
+        "islamabad": "Asia/Karachi",
+        "india": "Asia/Kolkata",
+        "hyderabad": "Asia/Kolkata",
+        "delhi": "Asia/Kolkata",
+        "mumbai": "Asia/Kolkata",
+        "bangalore": "Asia/Kolkata",
+        "us": "America/New_York",
+        "usa": "America/New_York",
+        "united states": "America/New_York",
+        "california": "America/Los_Angeles",
+        "los angeles": "America/Los_Angeles",
+        "san francisco": "America/Los_Angeles",
+        "new york": "America/New_York",
+        "nyc": "America/New_York",
+        "texas": "America/Chicago",
+        "chicago": "America/Chicago",
+        "uk": "Europe/London",
+        "london": "Europe/London",
+        "japan": "Asia/Tokyo",
+        "tokyo": "Asia/Tokyo",
+        "dubai": "Asia/Dubai",
+        "uae": "Asia/Dubai",
+        "saudi arabia": "Asia/Riyadh",
+        "riyadh": "Asia/Riyadh",
+        "qatar": "Asia/Qatar",
+        "doha": "Asia/Qatar",
+        "germany": "Europe/Berlin",
+        "berlin": "Europe/Berlin",
+        "france": "Europe/Paris",
+        "paris": "Europe/Paris",
+        "australia": "Australia/Sydney",
+        "sydney": "Australia/Sydney",
+        "melbourne": "Australia/Melbourne",
+        "canada": "America/Toronto",
+        "toronto": "America/Toronto",
+        "singapore": "Asia/Singapore",
+        "china": "Asia/Shanghai",
+        "beijing": "Asia/Shanghai",
+        "russia": "Europe/Moscow",
+        "moscow": "Europe/Moscow"
+    }
+
+    tz_target = alias_tz_map.get(loc_clean)
+
+    # Search pytz timezones if not in alias map
+    if not tz_target and loc_clean:
+        query_fmt = loc_clean.replace(" ", "_")
+        for tz in pytz.all_timezones:
+            if query_fmt in tz.lower():
+                tz_target = tz
+                break
+
+    try:
+        if tz_target:
+            tz = pytz.timezone(tz_target)
+            now = datetime.datetime.now(tz)
+            time_str = now.strftime('%I:%M %p (%Z, UTC%z)')
+            date_str = now.strftime('%A, %B %d, %Y')
+            return f"Current time in {location.title()}: {time_str} on {date_str}."
+        else:
+            now = datetime.datetime.now()
+            time_str = now.strftime('%I:%M %p')
+            date_str = now.strftime('%A, %B %d, %Y')
+            return f"Current local time: {time_str} on {date_str}."
+    except Exception as e:
+        logger.error(f"Error calculating time for {location}: {e}")
+        return f"Error retrieving time for {location}."
 
 async def get_weather(city: str = "Hyderabad", **kwargs) -> str:
     """
@@ -70,10 +157,10 @@ async def get_weather(city: str = "Hyderabad", **kwargs) -> str:
 
 async def search_information(query: str, **kwargs) -> str:
     """
-    Searches the web for live, up-to-date information, facts, answers, or news.
+    Searches the live web and encyclopedias for real-time information, answers, definitions, news, facts, people, or events.
     
     Args:
-        query: The search query (e.g. 'who is CEO of Apple', 'latest stock price TSLA', 'who won the match today').
+        query: The search query (e.g. 'current time in Pakistan', 'who is CEO of Apple', 'latest stock price TSLA', 'who won the match today').
     """
     actual_query = (query or kwargs.get("q") or kwargs.get("search") or "").strip()
     if not actual_query:
@@ -81,19 +168,30 @@ async def search_information(query: str, **kwargs) -> str:
 
     results_text = []
 
-    # 1. DuckDuckGo Instant Answer API
+    # 1. Quick Wikipedia lookup for entity/knowledge queries
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(actual_query)}"
+            w_res = await client.get(wiki_url, headers={"User-Agent": "JARVIS-Assistant"})
+            if w_res.status_code == 200:
+                w_data = w_res.json()
+                if w_data.get("extract"):
+                    results_text.append(f"Summary: {w_data['extract']}")
+    except Exception:
+        pass
+
+    # 2. DuckDuckGo Instant Answer API
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             ddg_url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(actual_query)}&format=json&no_html=1&skip_disambig=1"
             res = await client.get(ddg_url, headers={"User-Agent": "JARVIS-Assistant"})
             if res.status_code == 200:
                 data = res.json()
-                if data.get("AbstractText"):
+                if data.get("AbstractText") and not results_text:
                     results_text.append(f"Abstract: {data['AbstractText']}")
                 if data.get("Answer"):
                     results_text.append(f"Direct Answer: {data['Answer']}")
                 
-                # Related topics
                 topics = data.get("RelatedTopics", [])
                 for t in topics[:3]:
                     if isinstance(t, dict) and t.get("Text"):
@@ -101,7 +199,7 @@ async def search_information(query: str, **kwargs) -> str:
     except Exception as e:
         logger.warning(f"DuckDuckGo API search error: {e}")
 
-    # 2. DuckDuckGo HTML Search Scrape for snippets
+    # 3. DuckDuckGo HTML Search Scrape for snippets
     if not results_text or len(results_text) < 2:
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -121,7 +219,7 @@ async def search_information(query: str, **kwargs) -> str:
     if results_text:
         return f"Search results for '{actual_query}':\n" + "\n".join(results_text)
     
-    return f"No direct search summary found for '{actual_query}'. Try querying a browser directly."
+    return f"No direct search summary found for '{actual_query}'."
 
 async def fetch_url_content(url: str) -> str:
     """Fetches text content from a given web URL."""
@@ -148,11 +246,9 @@ async def open_and_prompt_chatgpt(prompt: str) -> str:
     """Opens ChatGPT in the user's browser with the prompt preloaded and submitted."""
     try:
         encoded_prompt = urllib.parse.quote_plus(prompt.strip())
-        # Modern ChatGPT accepts ?q= query parameter to immediately start answering
         url = f"https://chatgpt.com/?q={encoded_prompt}"
         os.system(f'start "" "{url}"')
         
-        # Also wait a moment and type/press enter as fallback
         await asyncio.sleep(2.5)
         try:
             import pyautogui
@@ -165,6 +261,19 @@ async def open_and_prompt_chatgpt(prompt: str) -> str:
         return f"Failed to open ChatGPT: {e}"
 
 def register_web_tools(registry):
+    registry.register(
+        name="get_current_time",
+        description="Get current live time, date, and timezone for any city, country, or location worldwide (e.g. 'Pakistan', 'London', 'Tokyo', 'New York', 'local')",
+        parameters={
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City or country name (e.g. 'Pakistan', 'London', 'Tokyo', 'local')"}
+            }
+        },
+        func=get_current_time,
+        permission_level=0
+    )
+
     registry.register(
         name="get_weather",
         description="Get real-time live weather, temperature, humidity, wind, and forecast for any city or location (e.g. 'Hyderabad', 'Mumbai', 'London')",
@@ -181,7 +290,7 @@ def register_web_tools(registry):
 
     registry.register(
         name="search_information",
-        description="Searches the live web for facts, answers, news, definitions, prices, or sports scores. Use this whenever the user asks for real-time information.",
+        description="Searches the live web and internet for ANY facts, answers, news, definitions, prices, questions, or real-time info. Use this whenever asked about anything in the world.",
         parameters={
             "type": "object",
             "properties": {

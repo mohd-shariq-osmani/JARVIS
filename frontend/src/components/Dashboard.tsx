@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Square, ArrowUp } from 'lucide-react';
+import { AccessModal, type AccessRequestData } from './AccessModal';
 
 interface LogMessage {
   id: string;
@@ -15,6 +16,7 @@ const Dashboard: React.FC = () => {
   const [queueCount, setQueueCount] = useState(0);
   const [input, setInput] = useState('');
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const [accessRequest, setAccessRequest] = useState<AccessRequestData | null>(null);
   const [logs, setLogs] = useState<LogMessage[]>([
     { id: '1', role: 'jarvis', text: 'All systems online. How may I assist you, sir?' }
   ]);
@@ -60,6 +62,13 @@ const Dashboard: React.FC = () => {
           setQueueCount(data.queue_size);
         }
 
+        if (data.type === 'ACCESS_REQUEST' || data.state === 'ACCESS_REQUEST') {
+          const req = data.payload || data;
+          if (req.id && req.action) {
+            setAccessRequest(req);
+          }
+        }
+
         if (data.transcript) {
           const text = data.transcript.trim();
           if (text && !text.startsWith('JARVIS activated.')) {
@@ -84,6 +93,19 @@ const Dashboard: React.FC = () => {
       voiceWs.close();
     };
   }, []);
+
+  const handleAccessResponse = async (requestId: string, grant: boolean) => {
+    setAccessRequest(null);
+    try {
+      await fetch('http://127.0.0.1:8000/api/access/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId, grant })
+      });
+    } catch (err) {
+      console.error('Failed to respond to access request:', err);
+    }
+  };
 
   const sendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -350,6 +372,9 @@ const Dashboard: React.FC = () => {
           <span>STATE: {voiceState}</span>
         </div>
       </footer>
+
+      {/* Interactive Permission / Access Request Modal */}
+      <AccessModal request={accessRequest} onRespond={handleAccessResponse} />
     </div>
   );
 };

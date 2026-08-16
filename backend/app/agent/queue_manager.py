@@ -39,6 +39,16 @@ class MessageQueueManager:
             return {"status": "stopped", "response": "Stopped."}
 
         # Normal message -> Push to queue
+        import time
+        now = time.time()
+        if hasattr(self, "_last_enqueued_msg") and hasattr(self, "_last_enqueued_time"):
+            if self._last_enqueued_msg == clean and (now - self._last_enqueued_time < 2.5):
+                logger.info(f"Suppressed duplicate message received within 2.5s: '{message}'")
+                return {"status": "duplicate_ignored"}
+        
+        self._last_enqueued_msg = clean
+        self._last_enqueued_time = now
+
         req_id = self.active_request_id + 1
         self.active_request_id = req_id
         
