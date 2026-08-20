@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JARVIS Avatar Overlay</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 280px;
+      height: 380px;
+      overflow: hidden;
+      background: transparent;
+      /* Allow mouse through transparent pixels */
+      -webkit-app-region: no-drag;
+      user-select: none;
+    }
+
+    /* Drag handle at top of avatar (small strip) */
+    #drag-handle {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 28px;
+      -webkit-app-region: drag;
+      cursor: grab;
+      z-index: 100;
+      /* barely visible grip indicator */
+      background: linear-gradient(to bottom, rgba(185,228,255,0.04), transparent);
+    }
+    #drag-handle:active { cursor: grabbing; }
+
+    #drag-hint {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 32px;
+      height: 3px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.12);
+    }
+
+    /* Canvas fills the body */
+    canvas#canvas {
+      display: block;
+      width: 280px !important;
+      height: 380px !important;
+      position: absolute;
+      top: 0; left: 0;
+    }
+
+    /* State badge */
+    #badge {
+      position: fixed;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(8,9,10,0.75);
+      color: rgba(185,228,255,0.5);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease, color 0.4s ease, border-color 0.4s ease;
+      z-index: 50;
+    }
+    #badge.visible { opacity: 1; }
+    #badge.listening { color: #b9e4ff; border-color: rgba(185,228,255,0.35); }
+    #badge.speaking  { color: #10b981; border-color: rgba(16,185,129,0.35); }
+    #badge.processing { color: #c9c9c4; border-color: rgba(255,255,255,0.15); }
+
+    /* Ambient glow under avatar feet */
+    #glow {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 120px;
+      height: 20px;
+      border-radius: 50%;
+      filter: blur(14px);
+      pointer-events: none;
+      background: transparent;
+      transition: background 0.6s ease;
+      z-index: 1;
+    }
+    #glow.listening  { background: rgba(185,228,255,0.3); }
+    #glow.speaking   { background: rgba(16,185,129,0.28); }
+    #glow.processing { background: rgba(255,255,255,0.1); }
+  </style>
+</head>
+<body>
+
+  <!-- Drag strip -->
+  <div id="drag-handle"><div id="drag-hint"></div></div>
+
+  <!-- Ambient glow -->
+  <div id="glow"></div>
+
+  <!-- Live2D canvas -->
+  <canvas id="canvas"></canvas>
+
+  <!-- State badge -->
+  <div id="badge"></div>
+
+  <!-- Live2D runtime stack (from CDN) -->
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6/dist/pixi.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+
+  <script>
+    const { Application } = PIXI;
+    const { Live2DModel } = PIXI.live2d;
+
+    const canvas  = document.getElementById('canvas');
+    const badge   = document.getElementById('badge');
+    const glow    = document.getElementById('glow');
+
+    let model;
+    let speakInterval = null;
+
+    // ── App ──────────────────────────────────────────────────────────────────
+    const app = new Application({
+      view: canvas,
+      autoStart: true,
+      backgroundAlpha: 0,
+      width: 280,
+      height: 380,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
+      antialias: true,
+    });
+
+    // ── Load model ───────────────────────────────────────────────────────────
+    async function loadModel() {
+      try {
+        // Try loading from Vite dev server first, then prod build path
+        const modelUrl = 'http://localhost:5173/live2d/hiyori/Hiyori.model3.json';
+        model = await Live2DModel.from(modelUrl, { autoInteract: false });
+        app.stage.addChild(model);
+        layoutModel();
+        model.motion('Idle', 0, 1);
+      } catch (err) {
+        console.error('Model load failed:', err);
+        badge.textContent = 'Model load failed';
+        badge.classList.add('visible');
+      }
+    }
+
+    function layoutModel() {
+      if (!model) return;
+      const w = app.screen.width;
+      const h = app.screen.height;
+      const scale = (h / model.height) * 0.92;
+      model.scale.set(scale);
+      model.anchor.set(0.5, 1.0);
+      model.x = w / 2;
+      model.y = h - 10;
+    }
+
+    // ── State machine ────────────────────────────────────────────────────────
+    function applyState(state) {
+      clearInterval(speakInterval);
+      speakInterval = null;
+
+      // Glow + badge
+      glow.className = '';
+      badge.className = '';
+      badge.textContent = '';
+
+      if (state === 'LISTENING') {
+        glow.className = 'listening';
+        badge.textContent = 'Listening';
+        badge.className = 'visible listening';
+      } else if (state === 'SPEAKING') {
+        glow.className = 'speaking';
+        badge.textContent = 'Speaking';
+        badge.className = 'visible speaking';
+      } else if (state === 'PROCESSING' || state === 'QUEUED') {
+        glow.className = 'processing';
+        badge.textContent = 'Processing';
+        badge.className = 'visible processing';
+      }
+
+      if (!model) return;
+
+      // Motion
+      if (state === 'SPEAKING') {
+        model.motion('TapBody', 0, 3);
+        // Lip sync oscillation
+        let phase = 0;
+        speakInterval = setInterval(() => {
+          try {
+            phase += 0.22;
+            const v = Math.abs(Math.sin(phase)) * 0.85;
+            model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', v);
+          } catch {}
+        }, 50);
+      } else {
+        try { model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0); } catch {}
+        const idxMap = { SLEEPING: 0, LISTENING: 1, PROCESSING: 2, QUEUED: 0 };
+        model.motion('Idle', idxMap[state] ?? 0, 1);
+      }
+    }
+
+    // ── Listen for state from Electron main (via postMessage or ws) ──────────
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'JARVIS_STATE') applyState(e.data.state);
+    });
+
+    // ── Also poll the JARVIS backend WebSocket directly ──────────────────────
+    // So the overlay works even when the main JARVIS window is closed/minimised
+    function connectWS() {
+      let ws;
+      try {
+        ws = new WebSocket('ws://127.0.0.1:8000/ws/voice');
+        ws.onmessage = (e) => {
+          try {
+            const d = JSON.parse(e.data);
+            if (d.state) {
+              const s = d.state.toUpperCase();
+              if (['SLEEPING','LISTENING','PROCESSING','SPEAKING','QUEUED'].includes(s)) {
+                applyState(s);
+              }
+            }
+          } catch {}
+        };
+        ws.onclose = () => setTimeout(connectWS, 3000); // auto-reconnect
+      } catch { setTimeout(connectWS, 3000); }
+    }
+
+    loadModel();
+    connectWS();
+  </script>
+</body>
+</html>
