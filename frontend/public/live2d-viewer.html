@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS Avatar</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+    canvas { display: block; width: 100% !important; height: 100% !important; }
+    #status {
+      position: fixed; bottom: 4px; left: 0; right: 0;
+      text-align: center; font-family: monospace; font-size: 10px;
+      color: rgba(185,228,255,0.4); pointer-events: none; z-index: 9;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="status">Initializing...</div>
+
+  <!-- Live2D Cubism 4 Core (required for model3.json) -->
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <!-- PIXI.js v6 -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6/dist/pixi.min.js"></script>
+  <!-- pixi-live2d-display (Cubism 4 support) -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+
+  <script>
+    const { Application, Ticker } = PIXI;
+    const { Live2DModel } = PIXI.live2d;
+
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+
+    let app, model;
+    let currentState = 'SLEEPING';
+    let speakInterval = null;
+
+    // Map voice state → motion group name + priority
+    const STATE_MOTION = {
+      SLEEPING:    { group: 'Idle',    idx: 0, priority: 1 },
+      LISTENING:   { group: 'Idle',    idx: 1, priority: 1 },
+      PROCESSING:  { group: 'Idle',    idx: 2, priority: 1 },
+      SPEAKING:    { group: 'TapBody', idx: 0, priority: 3 },
+      QUEUED:      { group: 'Idle',    idx: 0, priority: 1 },
+    };
+
+    async function init() {
+      statusEl.textContent = 'Loading runtime...';
+
+      app = new Application({
+        view: canvas,
+        autoStart: true,
+        backgroundAlpha: 0,
+        width: canvas.clientWidth || 320,
+        height: canvas.clientHeight || 480,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        antialias: true,
+      });
+
+      // Handle resize
+      const resizeObserver = new ResizeObserver(() => {
+        app.renderer.resize(canvas.clientWidth, canvas.clientHeight);
+        if (model) layoutModel();
+      });
+      resizeObserver.observe(canvas);
+
+      try {
+        statusEl.textContent = 'Loading model...';
+        model = await Live2DModel.from('/live2d/hiyori/Hiyori.model3.json', {
+          autoInteract: false,
+        });
+        app.stage.addChild(model);
+        layoutModel();
+        model.motion('Idle', 0, 1);
+        statusEl.textContent = '';
+      } catch (err) {
+        statusEl.textContent = 'Model load failed: ' + err.message;
+        console.error(err);
+      }
+    }
+
+    function layoutModel() {
+      if (!model) return;
+      const w = app.screen.width;
+      const h = app.screen.height;
+
+      // Scale to fit height, anchor to bottom-center
+      const scale = (h / model.height) * 0.95;
+      model.scale.set(scale);
+      model.anchor.set(0.5, 1.0);
+      model.x = w / 2;
+      model.y = h;
+    }
+
+    function applyState(state) {
+      if (!model) return;
+      currentState = state;
+
+      // Clear speaking mouth interval
+      if (speakInterval) {
+        clearInterval(speakInterval);
+        speakInterval = null;
+      }
+
+      const m = STATE_MOTION[state] || STATE_MOTION.SLEEPING;
+      model.motion(m.group, m.idx, m.priority);
+
+      if (state === 'SPEAKING') {
+        // Animate mouth open parameter in a loop to simulate lip sync
+        let phase = 0;
+        speakInterval = setInterval(() => {
+          if (!model?.internalModel?.coreModel) return;
+          phase += 0.25;
+          const val = Math.abs(Math.sin(phase)) * 0.9;
+          try {
+            model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', val);
+          } catch {}
+        }, 50);
+      } else {
+        // Reset mouth
+        try {
+          model?.internalModel?.coreModel?.setParameterValueById('ParamMouthOpenY', 0);
+        } catch {}
+      }
+
+      statusEl.textContent = state !== 'SLEEPING' ? state : '';
+    }
+
+    // Listen for state changes from parent (Dashboard.tsx via postMessage)
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'JARVIS_STATE') {
+        applyState(e.data.state);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

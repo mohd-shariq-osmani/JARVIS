@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Square, ArrowUp } from 'lucide-react';
 import { AccessModal, type AccessRequestData } from './AccessModal';
+import AvatarCore from './AvatarCore';
 
 interface LogMessage {
   id: string;
@@ -142,13 +143,6 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleCoreClick = () => {
-    if (isBusy) {
-      stopJarvis();
-    } else {
-      inputRef.current?.focus();
-    }
-  };
 
   const isBusy = voiceState === 'SPEAKING' || voiceState === 'PROCESSING' || voiceState === 'QUEUED';
   const isListening = voiceState === 'LISTENING';
@@ -224,11 +218,11 @@ const Dashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* Center Voice Interface Core */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center my-4">
-        
-        {/* Status Indicator Label */}
-        <div className="relative mb-8">
+      {/* Center — Live2D Avatar + Status */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center my-2">
+
+        {/* Status Label */}
+        <div className="relative mb-3">
           <div className={`font-outfit text-xs sm:text-sm tracking-[0.32em] uppercase font-light transition-all duration-500 ${
             isListening ? 'text-[#b9e4ff] drop-shadow-[0_0_10px_rgba(185,228,255,0.6)]' :
             isProcessing ? 'text-[#f2f2ef] drop-shadow-[0_0_10px_rgba(242,242,239,0.5)]' :
@@ -238,64 +232,11 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Single Unified Concentric Visualizer Core */}
-        <div className="relative flex items-center justify-center">
-          
-          <button
-            onClick={handleCoreClick}
-            className="jarvis-core-wrap bg-transparent border-0 cursor-pointer outline-none"
-            aria-label="JARVIS Core Visualizer"
-          >
-            {/* 48 Radial Ticks */}
-            <div className="jarvis-ticks">
-              {Array.from({ length: 48 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    transform: `rotate(${i * (360 / 48)}deg)`,
-                    height: i % 6 === 0 ? '10px' : '6px',
-                    opacity: i % 6 === 0 ? 0.9 : 0.4
-                  }}
-                />
-              ))}
-            </div>
+        {/* Live2D Avatar */}
+        <AvatarCore voiceState={voiceState} />
 
-            {/* Concentric Rings */}
-            <div className="jarvis-ring r1" />
-            <div className="jarvis-ring r2" />
-            <div className="jarvis-ring r3" />
-
-            {/* Center Core Lens */}
-            <div className="jarvis-center">
-              
-              {/* Dynamic 9-Bar Waveform */}
-              <div className="jarvis-wave">
-                {[
-                  { delay: '0.0s', speakH: '14px' },
-                  { delay: '0.12s', speakH: '26px' },
-                  { delay: '0.24s', speakH: '38px' },
-                  { delay: '0.36s', speakH: '22px' },
-                  { delay: '0.0s', speakH: '44px' },
-                  { delay: '0.36s', speakH: '24px' },
-                  { delay: '0.24s', speakH: '36px' },
-                  { delay: '0.12s', speakH: '26px' },
-                  { delay: '0.0s', speakH: '14px' },
-                ].map((bar, idx) => (
-                  <span
-                    key={idx}
-                    style={{
-                      animationDelay: bar.delay,
-                      height: voiceState === 'SPEAKING' ? bar.speakH : undefined
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {/* Quick Stop Button / Sub-hint */}
-        <div className="mt-8 flex items-center gap-3">
+        {/* Stop / hint row */}
+        <div className="mt-4 flex items-center gap-3">
           {isBusy ? (
             <button
               onClick={stopJarvis}
@@ -306,7 +247,7 @@ const Dashboard: React.FC = () => {
             </button>
           ) : (
             <div className="font-mono text-[9.5px] tracking-[0.16em] text-[#3a3c40] uppercase">
-              Click Core or say &quot;JARVIS&quot; — Say &quot;STOP JARVIS&quot; to interrupt
+              Say &quot;JARVIS&quot; to activate — or type below
             </div>
           )}
         </div>
