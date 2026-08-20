@@ -1,98 +1,147 @@
 import { useEffect, useRef } from 'react';
+import * as PIXI from 'pixi.js';
 
 type VoiceState = 'SLEEPING' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'QUEUED';
 
-interface AvatarCoreProps {
+interface Props {
   voiceState: VoiceState;
 }
 
 /**
- * AvatarCore renders the Hiyori Live2D model inside a transparent iframe.
- * State changes are passed to the iframe via postMessage so the avatar reacts
- * to JARVIS's voice state (idle breathing → head tilt → lip sync → etc.).
+ * AvatarCore — renders the Hiyori Live2D model directly on a PIXI canvas.
+ *
+ * Sequencing:
+ *  1. index.html loads /live2d/core/live2dcubismcore.min.js synchronously
+ *     → window.Live2DCubismCore is available immediately
+ *  2. This component sets window.PIXI = PIXI (required by pixi-live2d-display)
+ *  3. pixi-live2d-display is imported dynamically so it runs after step 2
+ *  4. Hiyori model is loaded from /public/live2d/hiyori/ (local, no CDN)
  */
-const AvatarCore: React.FC<AvatarCoreProps> = ({ voiceState }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const prevState = useRef<VoiceState>('SLEEPING');
+const AvatarCore: React.FC<Props> = ({ voiceState }) => {
+  const wrapRef    = useRef<HTMLDivElement>(null);
+  const modelRef   = useRef<any>(null);
+  const appRef     = useRef<any>(null);
+  const speakTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Send state to iframe whenever voiceState changes
+  // ── Init ────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (voiceState === prevState.current) return;
-    prevState.current = voiceState;
+    let destroyed = false;
 
-    const send = () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        { type: 'JARVIS_STATE', state: voiceState },
-        '*'
-      );
+    const init = async () => {
+      try {
+        // pixi-live2d-display reads window.PIXI internally — must be set first
+        (window as any).PIXI = PIXI;
+
+        // Dynamic import so it runs *after* window.PIXI is set
+        const { Live2DModel } = await import('pixi-live2d-display/cubism4');
+
+        if (destroyed || !wrapRef.current) return;
+
+        const wrap = wrapRef.current;
+        const W = wrap.clientWidth  || 300;
+        const H = wrap.clientHeight || 420;
+
+        const app = new PIXI.Application({
+          backgroundAlpha: 0,
+          width:  W,
+          height: H,
+          resolution: window.devicePixelRatio || 1,
+          autoDensity: true,
+          antialias: true,
+        });
+
+        wrap.appendChild(app.view as HTMLCanvasElement);
+        appRef.current = app;
+
+        const model = await Live2DModel.from(
+          '/live2d/hiyori/Hiyori.model3.json',
+          { autoInteract: false }
+        );
+
+        if (destroyed) { model.destroy(); return; }
+
+        app.stage.addChild(model);
+
+        // Scale to fit height, anchor at bottom-centre
+        const scale = (H / model.height) * 0.95;
+        model.scale.set(scale);
+        model.anchor.set(0.5, 1.0);
+        model.x = W / 2;
+        model.y = H;
+
+        modelRef.current = model;
+        model.motion('Idle', 0, 1);
+
+      } catch (err) {
+        console.error('[AvatarCore] init failed:', err);
+      }
     };
 
-    // Retry a few times in case iframe hasn't finished loading yet
-    send();
-    const t1 = setTimeout(send, 300);
-    const t2 = setTimeout(send, 700);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    init();
+
+    return () => {
+      destroyed = true;
+      clearInterval(speakTimer.current ?? undefined);
+      appRef.current?.destroy(true, { children: true });
+      appRef.current  = null;
+      modelRef.current = null;
+    };
+  }, []);
+
+  // ── React to voice state ─────────────────────────────────────────────────
+  useEffect(() => {
+    const model = modelRef.current;
+    clearInterval(speakTimer.current ?? undefined);
+    speakTimer.current = null;
+
+    if (!model) return;
+
+    if (voiceState === 'SPEAKING') {
+      model.motion('TapBody', 0, 3);
+
+      // Oscillate mouth parameter to simulate lip-sync
+      let phase = 0;
+      speakTimer.current = setInterval(() => {
+        try {
+          phase += 0.22;
+          const v = Math.abs(Math.sin(phase)) * 0.85;
+          model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', v);
+        } catch { /* model may not be ready yet */ }
+      }, 50);
+
+    } else {
+      // Reset mouth
+      try {
+        model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+      } catch {}
+
+      const idxMap: Record<VoiceState, number> = {
+        SLEEPING:   0,
+        LISTENING:  1,
+        PROCESSING: 2,
+        QUEUED:     0,
+        SPEAKING:   0,
+      };
+      model.motion('Idle', idxMap[voiceState], 1);
+    }
   }, [voiceState]);
 
-  // On iframe load, immediately sync current state
-  const handleLoad = () => {
-    setTimeout(() => {
-      iframeRef.current?.contentWindow?.postMessage(
-        { type: 'JARVIS_STATE', state: voiceState },
-        '*'
-      );
-    }, 500);
-  };
-
-  // Glow color changes with state
+  // ── Glow colour ──────────────────────────────────────────────────────────
   const glowColor =
-    voiceState === 'LISTENING'  ? 'rgba(185,228,255,0.18)' :
-    voiceState === 'SPEAKING'   ? 'rgba(16,185,129,0.15)'  :
-    voiceState === 'PROCESSING' ? 'rgba(255,255,255,0.08)' :
+    voiceState === 'LISTENING'  ? 'rgba(185,228,255,0.22)' :
+    voiceState === 'SPEAKING'   ? 'rgba(16,185,129,0.18)'  :
+    voiceState === 'PROCESSING' ? 'rgba(255,255,255,0.07)' :
     'transparent';
 
   return (
-    <div
-      className="relative flex items-end justify-center"
-      style={{ width: '100%', height: '340px', maxWidth: '340px' }}
-    >
-      {/* Ambient glow ring behind avatar */}
+    <div className="relative flex flex-col items-center" style={{ width: 300, height: 420 }}>
+      {/* Ambient glow under feet */}
       <div
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-48 h-12 rounded-full blur-2xl transition-all duration-700 pointer-events-none"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-40 h-10 rounded-full blur-2xl pointer-events-none transition-all duration-700"
         style={{ background: glowColor }}
       />
-
-      {/* Corner scan lines — subtle JARVIS aesthetic */}
-      <div className="absolute top-0 left-0 w-5 h-5 border-t border-l border-white/10 pointer-events-none" />
-      <div className="absolute top-0 right-0 w-5 h-5 border-t border-r border-white/10 pointer-events-none" />
-
-      {/* The actual Live2D iframe */}
-      <iframe
-        ref={iframeRef}
-        src="/live2d-viewer.html"
-        onLoad={handleLoad}
-        title="JARVIS Avatar"
-        className="w-full h-full border-0 bg-transparent"
-        style={{ background: 'transparent', pointerEvents: 'none' }}
-        sandbox="allow-scripts allow-same-origin"
-      />
-
-      {/* State label badge */}
-      {voiceState !== 'SLEEPING' && (
-        <div
-          className="absolute bottom-2 left-1/2 -translate-x-1/2 font-mono text-[8px] tracking-[0.2em] uppercase px-2 py-0.5 rounded-full border transition-all duration-500"
-          style={{
-            color: voiceState === 'LISTENING'  ? '#b9e4ff' :
-                   voiceState === 'SPEAKING'   ? '#10b981' : '#74777d',
-            borderColor: voiceState === 'LISTENING'  ? 'rgba(185,228,255,0.3)' :
-                         voiceState === 'SPEAKING'   ? 'rgba(16,185,129,0.3)'  :
-                         'rgba(255,255,255,0.08)',
-            background: 'rgba(8,9,10,0.7)',
-          }}
-        >
-          {voiceState}
-        </div>
-      )}
+      {/* Canvas mount point */}
+      <div ref={wrapRef} className="w-full h-full" style={{ background: 'transparent' }} />
     </div>
   );
 };

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>JARVIS Avatar Overlay</title>
+  <title>JARVIS Hiyori Overlay</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -10,33 +10,35 @@
       height: 380px;
       overflow: hidden;
       background: transparent;
-      /* Allow mouse through transparent pixels */
       -webkit-app-region: no-drag;
       user-select: none;
     }
 
-    /* Drag handle at top of avatar (small strip) */
+    /* Drag handle at top of avatar */
     #drag-handle {
       position: fixed;
       top: 0; left: 0; right: 0;
-      height: 28px;
+      height: 32px;
       -webkit-app-region: drag;
       cursor: grab;
       z-index: 100;
-      /* barely visible grip indicator */
-      background: linear-gradient(to bottom, rgba(185,228,255,0.04), transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     #drag-handle:active { cursor: grabbing; }
 
     #drag-hint {
-      position: absolute;
-      top: 6px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 32px;
-      height: 3px;
-      border-radius: 3px;
-      background: rgba(255,255,255,0.12);
+      width: 36px;
+      height: 4px;
+      border-radius: 4px;
+      background: rgba(185, 228, 255, 0.25);
+      box-shadow: 0 0 6px rgba(185, 228, 255, 0.4);
+      transition: all 0.3s ease;
+    }
+    #drag-handle:hover #drag-hint {
+      background: rgba(185, 228, 255, 0.6);
+      width: 48px;
     }
 
     /* Canvas fills the body */
@@ -54,49 +56,80 @@
       bottom: 8px;
       left: 50%;
       transform: translateX(-50%);
-      font-family: 'Courier New', monospace;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
       font-size: 9px;
+      font-weight: 600;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      padding: 2px 8px;
+      padding: 3px 10px;
       border-radius: 20px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(8,9,10,0.75);
-      color: rgba(185,228,255,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(8, 9, 11, 0.85);
+      backdrop-filter: blur(8px);
+      color: rgba(185,228,255,0.7);
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.4s ease, color 0.4s ease, border-color 0.4s ease;
+      transition: opacity 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
       z-index: 50;
+      white-space: nowrap;
     }
     #badge.visible { opacity: 1; }
-    #badge.listening { color: #b9e4ff; border-color: rgba(185,228,255,0.35); }
-    #badge.speaking  { color: #10b981; border-color: rgba(16,185,129,0.35); }
-    #badge.processing { color: #c9c9c4; border-color: rgba(255,255,255,0.15); }
+    #badge.listening {
+      color: #b9e4ff;
+      border-color: rgba(185,228,255,0.5);
+      box-shadow: 0 0 12px rgba(185,228,255,0.3);
+    }
+    #badge.speaking {
+      color: #10b981;
+      border-color: rgba(16,185,129,0.5);
+      box-shadow: 0 0 12px rgba(16,185,129,0.3);
+    }
+    #badge.processing {
+      color: #f2f2ef;
+      border-color: rgba(242,242,239,0.3);
+      box-shadow: 0 0 10px rgba(242,242,239,0.2);
+    }
 
     /* Ambient glow under avatar feet */
     #glow {
       position: fixed;
-      bottom: 16px;
+      bottom: 14px;
       left: 50%;
       transform: translateX(-50%);
-      width: 120px;
-      height: 20px;
+      width: 140px;
+      height: 24px;
       border-radius: 50%;
-      filter: blur(14px);
+      filter: blur(16px);
       pointer-events: none;
       background: transparent;
       transition: background 0.6s ease;
       z-index: 1;
     }
-    #glow.listening  { background: rgba(185,228,255,0.3); }
-    #glow.speaking   { background: rgba(16,185,129,0.28); }
-    #glow.processing { background: rgba(255,255,255,0.1); }
+    #glow.listening  { background: rgba(185,228,255,0.35); }
+    #glow.speaking   { background: rgba(16,185,129,0.32); }
+    #glow.processing { background: rgba(255,255,255,0.15); }
+
+    /* Loading / Error indicator */
+    #status-msg {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: monospace;
+      font-size: 11px;
+      color: rgba(185, 228, 255, 0.6);
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
 
-  <!-- Drag strip -->
-  <div id="drag-handle"><div id="drag-hint"></div></div>
+  <!-- Drag handle -->
+  <div id="drag-handle" title="Drag to move avatar">
+    <div id="drag-hint"></div>
+  </div>
 
   <!-- Ambient glow -->
   <div id="glow"></div>
@@ -104,70 +137,100 @@
   <!-- Live2D canvas -->
   <canvas id="canvas"></canvas>
 
+  <!-- Status / Error message while loading -->
+  <div id="status-msg">Loading Hiyori...</div>
+
   <!-- State badge -->
   <div id="badge"></div>
 
-  <!-- Live2D runtime stack (from CDN) -->
-  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6/dist/pixi.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+  <!-- Local 100% Offline Live2D Stack -->
+  <script src="live2d/core/live2dcubismcore.min.js"></script>
+  <script src="live2d/core/pixi.min.js"></script>
+  <script src="live2d/core/cubism4.min.js"></script>
 
   <script>
-    const { Application } = PIXI;
-    const { Live2DModel } = PIXI.live2d;
+    const canvas     = document.getElementById('canvas');
+    const badge      = document.getElementById('badge');
+    const glow       = document.getElementById('glow');
+    const statusMsg  = document.getElementById('status-msg');
 
-    const canvas  = document.getElementById('canvas');
-    const badge   = document.getElementById('badge');
-    const glow    = document.getElementById('glow');
-
-    let model;
+    let app = null;
+    let model = null;
     let speakInterval = null;
+    let currentVoiceState = 'SLEEPING';
 
-    // ── App ──────────────────────────────────────────────────────────────────
-    const app = new Application({
-      view: canvas,
-      autoStart: true,
-      backgroundAlpha: 0,
-      width: 280,
-      height: 380,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-      antialias: true,
-    });
-
-    // ── Load model ───────────────────────────────────────────────────────────
-    async function loadModel() {
+    async function init() {
       try {
-        // Try loading from Vite dev server first, then prod build path
-        const modelUrl = 'http://localhost:5173/live2d/hiyori/Hiyori.model3.json';
-        model = await Live2DModel.from(modelUrl, { autoInteract: false });
+        if (!window.Live2DCubismCore) {
+          throw new Error('Live2DCubismCore not found');
+        }
+        if (!window.PIXI || !window.PIXI.live2d) {
+          throw new Error('PIXI or Live2D plugin not loaded');
+        }
+
+        const { Application } = PIXI;
+        const { Live2DModel } = PIXI.live2d;
+
+        app = new Application({
+          view: canvas,
+          autoStart: true,
+          backgroundAlpha: 0,
+          width: 280,
+          height: 380,
+          resolution: window.devicePixelRatio || 1,
+          autoDensity: true,
+          antialias: true,
+        });
+
+        // Determine base path for model3.json
+        const modelPath = 'live2d/hiyori/Hiyori.model3.json';
+
+        model = await Live2DModel.from(modelPath, {
+          autoInteract: false,
+        });
+
         app.stage.addChild(model);
         layoutModel();
-        model.motion('Idle', 0, 1);
+
+        // Initial idle motion
+        try {
+          model.motion('Idle', 0, 1);
+        } catch (e) {
+          console.warn('Initial motion error:', e);
+        }
+
+        statusMsg.style.display = 'none';
+
+        // Listen for window resize
+        window.addEventListener('resize', layoutModel);
+
       } catch (err) {
-        console.error('Model load failed:', err);
-        badge.textContent = 'Model load failed';
-        badge.classList.add('visible');
+        console.error('Failed to initialize Live2D overlay:', err);
+        statusMsg.textContent = 'Hiyori init error: ' + err.message;
       }
     }
 
     function layoutModel() {
-      if (!model) return;
-      const w = app.screen.width;
-      const h = app.screen.height;
+      if (!model || !app) return;
+      const w = 280;
+      const h = 380;
+      // Scale to fit height nicely
       const scale = (h / model.height) * 0.92;
       model.scale.set(scale);
       model.anchor.set(0.5, 1.0);
       model.x = w / 2;
-      model.y = h - 10;
+      model.y = h - 6;
     }
 
-    // ── State machine ────────────────────────────────────────────────────────
     function applyState(state) {
-      clearInterval(speakInterval);
-      speakInterval = null;
+      if (speakInterval) {
+        clearInterval(speakInterval);
+        speakInterval = null;
+      }
 
-      // Glow + badge
+      currentVoiceState = state;
+
+      // Update UI glow and badge
       glow.className = '';
       badge.className = '';
       badge.textContent = '';
@@ -182,59 +245,91 @@
         badge.className = 'visible speaking';
       } else if (state === 'PROCESSING' || state === 'QUEUED') {
         glow.className = 'processing';
-        badge.textContent = 'Processing';
+        badge.textContent = state === 'QUEUED' ? 'Queued' : 'Processing';
         badge.className = 'visible processing';
       }
 
       if (!model) return;
 
-      // Motion
-      if (state === 'SPEAKING') {
-        model.motion('TapBody', 0, 3);
-        // Lip sync oscillation
-        let phase = 0;
-        speakInterval = setInterval(() => {
+      try {
+        if (state === 'SPEAKING') {
+          // Play TapBody motion for active speaking expression
+          model.motion('TapBody', 0, 3);
+
+          // Animate lip-sync open/close parameter
+          let phase = 0;
+          speakInterval = setInterval(() => {
+            try {
+              if (model?.internalModel?.coreModel) {
+                phase += 0.25;
+                const v = Math.abs(Math.sin(phase)) * 0.85;
+                model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', v);
+              }
+            } catch (e) {}
+          }, 50);
+
+        } else {
+          // Reset mouth closed
           try {
-            phase += 0.22;
-            const v = Math.abs(Math.sin(phase)) * 0.85;
-            model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', v);
-          } catch {}
-        }, 50);
-      } else {
-        try { model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0); } catch {}
-        const idxMap = { SLEEPING: 0, LISTENING: 1, PROCESSING: 2, QUEUED: 0 };
-        model.motion('Idle', idxMap[state] ?? 0, 1);
+            if (model?.internalModel?.coreModel) {
+              model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+            }
+          } catch (e) {}
+
+          const idxMap = {
+            SLEEPING: 0,
+            LISTENING: 1,
+            PROCESSING: 2,
+            QUEUED: 0,
+            READY: 0
+          };
+          const motionIdx = idxMap[state] ?? 0;
+          model.motion('Idle', motionIdx, 1);
+        }
+      } catch (err) {
+        console.warn('Motion trigger error:', err);
       }
     }
 
-    // ── Listen for state from Electron main (via postMessage or ws) ──────────
-    window.addEventListener('message', (e) => {
-      if (e.data?.type === 'JARVIS_STATE') applyState(e.data.state);
-    });
-
-    // ── Also poll the JARVIS backend WebSocket directly ──────────────────────
-    // So the overlay works even when the main JARVIS window is closed/minimised
+    // Connect directly to JARVIS backend WebSocket
     function connectWS() {
-      let ws;
+      let ws = null;
       try {
         ws = new WebSocket('ws://127.0.0.1:8000/ws/voice');
+
         ws.onmessage = (e) => {
           try {
-            const d = JSON.parse(e.data);
-            if (d.state) {
-              const s = d.state.toUpperCase();
-              if (['SLEEPING','LISTENING','PROCESSING','SPEAKING','QUEUED'].includes(s)) {
-                applyState(s);
+            const data = JSON.parse(e.data);
+            if (data.state) {
+              const s = data.state.toUpperCase();
+              if (['SLEEPING', 'LISTENING', 'PROCESSING', 'SPEAKING', 'QUEUED', 'READY'].includes(s)) {
+                applyState(s === 'READY' ? 'SLEEPING' : s);
               }
             }
-          } catch {}
+          } catch (err) {}
         };
-        ws.onclose = () => setTimeout(connectWS, 3000); // auto-reconnect
-      } catch { setTimeout(connectWS, 3000); }
+
+        ws.onerror = () => {};
+        ws.onclose = () => {
+          setTimeout(connectWS, 2500);
+        };
+      } catch (e) {
+        setTimeout(connectWS, 2500);
+      }
     }
 
-    loadModel();
-    connectWS();
+    // Also listen for postMessage from parent if embedded
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'JARVIS_STATE') {
+        applyState(e.data.state);
+      }
+    });
+
+    // Start everything
+    window.addEventListener('DOMContentLoaded', () => {
+      init();
+      connectWS();
+    });
   </script>
 </body>
 </html>
